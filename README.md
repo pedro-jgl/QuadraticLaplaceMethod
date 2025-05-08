@@ -93,3 +93,7 @@ pred = la(x, pred_type="glm", link_approx="probit")
 
 Pull requests are very welcome.
 Please follow the guidelines in <https://aleximmer.github.io/Laplace/devs_guide>
+
+## Changes
+
+
