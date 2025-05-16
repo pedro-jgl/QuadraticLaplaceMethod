@@ -503,3 +503,185 @@ class EFInterface(CurvatureInterface):
         Gs, loss = Gs.detach(), loss.detach()
         diag_ef = torch.einsum("bp,bp->p", Gs, Gs)
         return self.factor * loss, self.factor * diag_ef
+    
+
+
+class MyInterface(CurvatureInterface):
+    """Generalized Gauss-Newton or Fisher Curvature Interface.
+    The GGN is equal to the Fisher information for the available likelihoods.
+    In addition to `CurvatureInterface`, methods for Jacobians are required by subclasses.
+
+    Parameters
+    ----------
+    model : torch.nn.Module or `laplace.utils.feature_extractor.FeatureExtractor`
+        torch model (neural network)
+    likelihood : {'classification', 'regression'}
+    last_layer : bool, default=False
+        only consider curvature of last layer
+    subnetwork_indices : torch.Tensor, default=None
+        indices of the vectorized model parameters that define the subnetwork
+        to apply the Laplace approximation over
+    dict_key_x: str, default='input_ids'
+        The dictionary key under which the input tensor `x` is stored. Only has effect
+        when the model takes a `MutableMapping` as the input. Useful for Huggingface
+        LLM models.
+    dict_key_y: str, default='labels'
+        The dictionary key under which the target tensor `y` is stored. Only has effect
+        when the model takes a `MutableMapping` as the input. Useful for Huggingface
+        LLM models.
+    stochastic : bool, default=False
+        Fisher if stochastic else GGN
+    num_samples: int, default=1
+        Number of samples used to approximate the stochastic Fisher
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        likelihood: Likelihood | str,
+        last_layer: bool = False,
+        subnetwork_indices: torch.LongTensor | None = None,
+        dict_key_x: str = "input_ids",
+        dict_key_y: str = "labels",
+        stochastic: bool = False,
+        num_samples: int = 1,
+    ) -> None:
+        self.stochastic: bool = stochastic
+        self.num_samples: int = num_samples
+
+        super().__init__(
+            model, likelihood, last_layer, subnetwork_indices, dict_key_x, dict_key_y
+        )
+
+    def _get_mc_functional_fisher(self, f: torch.Tensor) -> torch.Tensor:
+        """Approximate the Fisher's middle matrix (expected outer product of the functional gradient)
+        using MC integral with `self.num_samples` many samples.
+        """
+        F = 0
+
+        for _ in range(self.num_samples):
+            if self.likelihood == "regression":
+                # N(y | f, 1)
+                y_sample = f + torch.randn(f.shape, device=f.device, dtype=f.dtype)
+                grad_sample = f - y_sample  # functional MSE grad
+            else:  # classification with softmax
+                y_sample = torch.distributions.Multinomial(logits=f).sample()
+                # First functional derivative of the loglik is p - y
+                p = torch.softmax(f, dim=-1)
+                grad_sample = p - y_sample
+
+            F += (
+                1
+                / self.num_samples
+                * torch.einsum("bc,bk->bck", grad_sample, grad_sample)
+            )
+
+        return F
+
+    def _get_functional_hessian(self, f: torch.Tensor) -> torch.Tensor | None:
+        if self.likelihood == "regression":
+            return None
+        else:
+            # second d<erivative of log lik is diag(p) - pp^T
+            ps = torch.softmax(f, dim=-1)
+            G = torch.diag_embed(ps) - torch.einsum("mk,mc->mck", ps, ps)
+            return G
+        
+    def _get_refined_jacobians(
+        self,
+        x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        y: torch.Tensor,
+        **kwargs: dict[str, Any]
+    ):
+        Js, f = self.last_layer_jacobians(x) if self.last_layer else self.jacobians(x)
+
+        # Multiplicación eficiente por el hess
+        # Poniendo z = Jacobiano, Hz es el Hessiano. Iterando, converge. No hacer estandarización en el método de la potencia.
+        def jacobian_vector_product(z):
+            #Js, f = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
+            Js, _ = self.last_layer_jacobians(x) if self.last_layer else self.jacobians(x)
+            #Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
+            #Js = torch.cat(Js, dim=-1)
+            #out = torch.sum(Js.unsqueeze(-2) * z, axis = -1)
+            # Js de la función jacobians tiene shape (batch, parameters, outputs)
+            # Sin embargo, Js de la función last_layer_jacobians tiene shape (batch, outputs, parameters) -> Es necesario permutar????
+            out = torch.sum(Js * z, dim=1) if self.last_layer else torch.sum(Js * z, dim=2)
+            
+            return out, out #Hz, f =  torch.func.jacrev(jacobian_vector_product, has_aux=True)(z)
+
+        z , _ = self.last_layer_jacobians(x) if self.last_layer else self.jacobians(x)
+        for _ in range(10):
+            JJ = torch.einsum("bcp,bcq->pq", Js, Js)
+            JJz = torch.einsum("pq,bq->bp", JJ, z)
+
+            Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(z)
+            Hz *= (f(x)-y)
+
+            z = JJz + Hz
+
+        return z
+    
+    def full(
+        self,
+        x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        y: torch.Tensor,
+        **kwargs: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the full GGN \\(P \\times P\\) matrix as Hessian approximation
+        \\(H_{ggn}\\) with respect to parameters \\(\\theta \\in \\mathbb{R}^P\\).
+        For last-layer, reduced to \\(\\theta_{last}\\)
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            input data `(batch, input_shape)`
+        y : torch.Tensor
+            labels `(batch, label_shape)`
+
+        Returns
+        -------
+        loss : torch.Tensor
+        H : torch.Tensor
+            GGN `(parameters, parameters)`
+        """
+        Js, f = self.last_layer_jacobians(x) if self.last_layer else self.jacobians(x)
+        H_lik = (
+            self._get_mc_functional_fisher(f)
+            if self.stochastic
+            else self._get_functional_hessian(f)
+        )
+
+        refined_Js = self._get_refined_jacobians(x, y)
+
+        if H_lik is not None:
+            P = torch.einsum("bcp,bck,bkq->pq", refined_Js, H_lik, refined_Js)
+        else:  # The case of exact GGN for regression
+            P = torch.einsum("bcp,bcq->pq", refined_Js, refined_Js)
+        loss = self.factor * self.lossfunc(f, y)
+
+        return loss.detach(), P.detach()
+    
+
+    def diag(
+        self,
+        x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        y: torch.Tensor,
+        **kwargs: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        Js, f = self.last_layer_jacobians(x) if self.last_layer else self.jacobians(x)
+        loss = self.factor * self.lossfunc(f, y)
+
+        H_lik = (
+            self._get_mc_functional_fisher(f)
+            if self.stochastic
+            else self._get_functional_hessian(f)
+        )
+
+        refined_Js = self._get_refined_jacobians(x, y)
+
+        if H_lik is not None:
+            P = torch.einsum("bcp,bck,bkp->p", refined_Js, H_lik, refined_Js)
+        else:  # The case of exact GGN for regression
+            P = torch.einsum("bcp,bcp->p", refined_Js, refined_Js)
+
+        return loss.detach(), P.detach()
