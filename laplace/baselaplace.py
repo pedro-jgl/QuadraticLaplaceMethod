@@ -1681,8 +1681,8 @@ class FullLaplace(ParametricLaplace):
         return delta @ self.posterior_precision @ delta
 
     def functional_variance(self, Js: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("ncp,pq,nkq->nck", Js, self.posterior_covariance, Js)
-
+        return torch.einsum("ncp,pq,nkq->nck", Js, self.posterior_covariance, Js) # En mi caso post_cov es igual. Cambiar Js por refined_Js de test (recibimos un punto de test).
+    # Esta función también cambio Js por los refinados tal y como hicimos en la anterior. 
     def functional_covariance(self, Js: torch.Tensor) -> torch.Tensor:
         n_batch, n_outs, n_params = Js.shape
         Js = Js.reshape(n_batch * n_outs, n_params)
