@@ -606,22 +606,25 @@ class MyInterface(CurvatureInterface):
             # Js de la función jacobians tiene shape (batch, parameters, outputs)
             # Sin embargo, Js de la función last_layer_jacobians tiene shape (batch, outputs, parameters) -> Es necesario permutar????
             # Los jac son iguales en lastlayer para todas las salidas (es lineal). No vamos a usar last layer en principio.
-            import pdb; pdb.set_trace() # Punto de ruptura para chequear que está todo bien. Comprobar que coincide con la mult no eficiente.
+            #import pdb; pdb.set_trace() # Punto de ruptura para chequear que está todo bien. Comprobar que coincide con la mult no eficiente.
             out = torch.sum(Js * z, dim=1) if self.last_layer else torch.sum(Js * z, dim=2)
             
             return out, out #Hz, f =  torch.func.jacrev(jacobian_vector_product, has_aux=True)(z)
 
-        z = Js.copy()
+        z = Js.detach().clone()
         for _ in range(10):
+            # Comprobar las dimensiones
             # No son eficientes estas multiplicaciones. El orden importa. Así no construimos JJ.
             #JJ = torch.einsum("bcp,bcq->pq", Js, Js)
             #JJz = torch.einsum("pq,bq->bp", JJ, z)
             # Con estas sí:
-            Jz = torch.einsum("bcp,bkq->bp", Js, z) # Esto debería ser un escalar (J^t * z). Cambiar los índices del einsum.
-            JJz = torch.einsum("bcp,bkq->bp", Js, Jz)
+            Jz = torch.einsum("bcp,bcp->b", Js, z) # Esto debería ser un escalar (J^t * z). Cambiar los índices del einsum.
+            JJz = torch.einsum("bcp,b->bp", Js, Jz)
 
             Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(Js,z)
-            Hz *= (f(x)-y) # f(x)-y puede ser un vector. Comprobar que está bien con un break point. Comparar con LLA. Si es un vector, tengo que hacer todas las operaciones teniendo el batch en cuenta.
+            # Es necesario multiplicar por el residuo? O lo hace ya en H_lik? El producto de la precisión posterior por 1/var parece que se hace en posterior_precision de Laplace.
+            # No puedo calcular el residuo en test, no?
+            Hz *= (f(x)-y) # Modificar esta multiplicación teniendo en cuenta que f(x)-y es un vector (hacer todas las operaciones teniendo el batch en cuenta).
             # Que coincida con # Js de la función jacobians tiene shape (batch, parameters, outputs)
 
             z = JJz + Hz

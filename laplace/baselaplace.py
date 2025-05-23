@@ -18,7 +18,7 @@ from torch.utils.data import DataLoader
 from laplace.curvature.asdfghjkl import AsdfghjklHessian
 from laplace.curvature.asdl import AsdlGGN
 from laplace.curvature.backpack import BackPackGGN
-from laplace.curvature.curvature import CurvatureInterface
+from laplace.curvature.curvature import CurvatureInterface, MyInterface
 from laplace.curvature.curvlinops import CurvlinopsEF, CurvlinopsGGN
 from laplace.utils import SoDSampler
 from laplace.utils.enums import (
@@ -45,6 +45,7 @@ __all__ = [
     "KronLaplace",
     "DiagLaplace",
     "LowRankLaplace",
+    "MyLaplace",
 ]
 
 
@@ -3310,3 +3311,181 @@ class FunctionalLaplace(BaseLaplace):
         self.likelihood = state_dict["likelihood"]
         self.temperature = state_dict["temperature"]
         self.enable_backprop = state_dict["enable_backprop"]
+
+
+
+class MyLaplace(ParametricLaplace):
+    """Laplace approximation with full, i.e., dense, log likelihood Hessian approximation
+    and hence posterior precision. Based on the chosen `backend` parameter, the full
+    approximation can be, for example, a generalized Gauss-Newton matrix.
+    Mathematically, we have \\(P \\in \\mathbb{R}^{P \\times P}\\).
+    See `BaseLaplace` for the full interface.
+    """
+
+    # key to map to correct subclass of BaseLaplace, (subset of weights, Hessian structure)
+    _key = ("all", "quad")
+
+    def __init__(
+        self,
+        model: nn.Module,
+        likelihood: Likelihood | str,
+        sigma_noise: float | torch.Tensor = 1.0,
+        prior_precision: float | torch.Tensor = 1.0,
+        prior_mean: float | torch.Tensor = 0.0,
+        temperature: float = 1.0,
+        enable_backprop: bool = False,
+        dict_key_x: str = "input_ids",
+        dict_key_y: str = "labels",
+        backend: type[CurvatureInterface] | None = None,
+        backend_kwargs: dict[str, Any] | None = None,
+    ):
+        super().__init__(
+            model,
+            likelihood,
+            sigma_noise,
+            prior_precision,
+            prior_mean,
+            temperature,
+            enable_backprop,
+            dict_key_x,
+            dict_key_y,
+            MyInterface,    #backend=MyInterface
+            backend_kwargs,
+        )
+        self._posterior_scale: torch.Tensor | None = None
+
+    def _init_H(self) -> None:
+        self.H: torch.Tensor = torch.zeros(
+            self.n_params, self.n_params, device=self._device, dtype=self._dtype
+        )
+
+    def _curv_closure(
+        self,
+        X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        y: torch.Tensor,
+        N: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.backend.full(X, y, N=N)
+
+    def fit(
+        self,
+        train_loader: DataLoader,
+        override: bool = True,
+        progress_bar: bool = False,
+    ) -> None:
+        self._posterior_scale = None
+        super().fit(train_loader, override=override, progress_bar=progress_bar)
+
+    def _compute_scale(self) -> None:
+        self._posterior_scale = invsqrt_precision(self.posterior_precision)
+
+    @property
+    def posterior_scale(self) -> torch.Tensor:
+        """Posterior scale (square root of the covariance), i.e.,
+        \\(P^{-\\frac{1}{2}}\\).
+
+        Returns
+        -------
+        scale : torch.tensor
+            `(parameters, parameters)`
+        """
+        if self._posterior_scale is None:
+            self._compute_scale()
+        return self._posterior_scale
+
+    @property
+    def posterior_covariance(self) -> torch.Tensor:
+        """Posterior covariance, i.e., \\(P^{-1}\\).
+
+        Returns
+        -------
+        covariance : torch.tensor
+            `(parameters, parameters)`
+        """
+        scale = self.posterior_scale
+        return scale @ scale.T
+
+    @property
+    def posterior_precision(self) -> torch.Tensor:
+        """Posterior precision \\(P\\).
+
+        Returns
+        -------
+        precision : torch.tensor
+            `(parameters, parameters)`
+        """
+        self._check_H_init()
+        return self._H_factor * self.H + torch.diag(self.prior_precision_diag)
+
+    @property
+    def log_det_posterior_precision(self) -> torch.Tensor:
+        return self.posterior_precision.logdet()
+
+    def square_norm(self, value: torch.Tensor) -> torch.Tensor:
+        delta = value - self.mean
+        return delta @ self.posterior_precision @ delta
+
+    def functional_variance(self, refined_Js: torch.Tensor) -> torch.Tensor:
+        return torch.einsum("ncp,pq,nkq->nck", refined_Js, self.posterior_covariance, refined_Js)
+
+    def functional_covariance(self, refined_Js: torch.Tensor) -> torch.Tensor:
+        n_batch, n_outs, n_params = refined_Js.shape
+        refined_Js = refined_Js.reshape(n_batch * n_outs, n_params)
+        return torch.einsum("np,pq,mq->nm", refined_Js, self.posterior_covariance, refined_Js)
+    
+    # Modificar esta función para refinar Js en test.
+    # Utilizar montecarlo (50 samples más o menos de la posterior) para aproximar la distribución predictiva.
+    # Pasar samples (generados en otra función) como argumento. Devolver media y var como se hace ahora.
+    # La media puedo dejar la salida de la red. Solo ver la varianza con montecarlo de la pred.
+    @torch.enable_grad()
+    def _glm_predictive_distribution(
+        self,
+        X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        joint: bool = False,
+        diagonal_output: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if "asdl" in self._backend_cls.__name__.lower():
+            # Asdl's doesn't support backprop over Jacobians
+            # falling back to functorch
+            warnings.warn(
+                "ASDL backend is used which does not support backprop through "
+                "the functional variance, but `self.enable_backprop = True`. "
+                "Falling back to using `self.backend.functorch_jacobians` "
+                "which can be memory intensive for large models."
+            )
+
+            Js, f_mu = self.backend.functorch_jacobians(
+                X, enable_backprop=self.enable_backprop
+            )
+        else:
+            Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+
+        #Js = self.backend._get_refined_jacobians(X, y, Js, f_mu) -> Problema, no tengo y en test, no?
+        if joint:
+            f_mu = f_mu.flatten()  # (batch*out)
+            f_var = self.functional_covariance(Js)  # (batch*out, batch*out)
+        else:
+            f_var = self.functional_variance(Js)  # (batch, out, out)
+
+            if diagonal_output:
+                f_var = torch.diagonal(f_var, dim1=-2, dim2=-1)
+
+        return (
+            (f_mu.detach(), f_var.detach())
+            if not self.enable_backprop
+            else (f_mu, f_var)
+        )
+
+    def sample(
+        self, n_samples: int = 100, generator: torch.Generator | None = None
+    ) -> torch.Tensor:
+        samples = torch.randn(
+            n_samples,
+            self.n_params,
+            device=self._device,
+            dtype=self._dtype,
+            generator=generator,
+        )
+        # (n_samples, n_params) x (n_params, n_params) -> (n_samples, n_params)
+        samples = samples @ self.posterior_scale.T
+        return self.mean.reshape(1, self.n_params) + samples
