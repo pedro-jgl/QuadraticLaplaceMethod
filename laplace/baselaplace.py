@@ -1684,8 +1684,8 @@ class FullLaplace(ParametricLaplace):
         return delta @ self.posterior_precision @ delta
 
     def functional_variance(self, Js: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("ncp,pq,nkq->nck", Js, self.posterior_covariance, Js) # En mi caso post_cov es igual. Cambiar Js por refined_Js de test (recibimos un punto de test).
-    # Esta función también cambio Js por los refinados tal y como hicimos en la anterior. 
+        return torch.einsum("ncp,pq,nkq->nck", Js, self.posterior_covariance, Js) 
+    
     def functional_covariance(self, Js: torch.Tensor) -> torch.Tensor:
         n_batch, n_outs, n_params = Js.shape
         Js = Js.reshape(n_batch * n_outs, n_params)
@@ -3435,65 +3435,29 @@ class MyLaplace(ParametricLaplace):
         refined_Js = refined_Js.reshape(n_batch * n_outs, n_params)
         return torch.einsum("np,pq,mq->nm", refined_Js, self.posterior_covariance, refined_Js)
     
-    # Modificar esta función para refinar Js en test.
     # Utilizar montecarlo (50 samples más o menos de la posterior) para aproximar la distribución predictiva.
-    # Pasar samples (generados en otra función) como argumento. Devolver media y var como se hace ahora.
-    # La media puedo dejar la salida de la red. Solo ver la varianza con montecarlo de la pred.
     @torch.enable_grad()
     def _glm_predictive_distribution(
         self,
         X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
         joint: bool = False,
         diagonal_output: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        '''if "asdl" in self._backend_cls.__name__.lower():
-            # Asdl's doesn't support backprop over Jacobians
-            # falling back to functorch
-            warnings.warn(
-                "ASDL backend is used which does not support backprop through "
-                "the functional variance, but `self.enable_backprop = True`. "
-                "Falling back to using `self.backend.functorch_jacobians` "
-                "which can be memory intensive for large models."
-            )
-
-            Js, f_mu = self.backend.functorch_jacobians(
-                X, enable_backprop=self.enable_backprop
-            )
-        else:
-            Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)'''
-
-        #Js = self.backend._get_refined_jacobians(X, y, Js, f_mu) -> Problema, no tengo y en test, no?
-        
-        # Ahora mismo estamos probando regresión con salida en R
-        '''if joint: 
-            f_mu = f_mu.flatten()  # (batch*out)
-            f_var = self.functional_covariance(Js)  # (batch*out, batch*out)
-        else:
-            f_var = self.functional_variance(Js)  # (batch, out, out)
-
-            if diagonal_output:
-                f_var = torch.diagonal(f_var, dim1=-2, dim2=-1)'''
-        
-        
+    ) -> tuple[torch.Tensor, torch.Tensor]:        
+        # Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
+        # Simulación montecarlo
+        num_samples = 50
+        thetas = self.sample(n_samples=num_samples)
+        Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
 
         #approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t P (theta-theta_MAP)
-        #approx_out = self.mean +
-        lklihood = Normal(loc=approx_out, scale=self.sigma_noise)
+        approx_out = self.model(X) + Js @ (thetas - self.mean) + 0.5 * (thetas - self.mean) @ self.posterior_scale @ (thetas - self.mean).T # Revisar esta línea
+        # Cambiar el último producto por una función hessian_vector_product.
 
-        num_samples = 50
-        samples = self.sample(n_samples=num_samples)
-        
-        probs = lklihood.log_prob(samples).exp()
-
-        # La media es la salida de la red neuronal. f_mu =  # (batch, out)
-        f_var = probs.var(dim=0)  # (batch, out)
+        # La media es la salida de la red neuronal
+        # La varianza se aproxima con montecarlo
+        f_var = approx_out.var(dim=0, unbiased=False)  # (batch, out) unbiased false o true?
 
         return (f_mu, f_var)
-        '''return (
-            (f_mu.detach(), f_var.detach())
-            if not self.enable_backprop
-            else (f_mu, f_var)
-        )'''
 
     def sample(
         self, n_samples: int = 100, generator: torch.Generator | None = None
