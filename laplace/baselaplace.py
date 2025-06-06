@@ -14,6 +14,8 @@ from torch import nn
 from torch.linalg import LinAlgError
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 from torch.utils.data import DataLoader
+from torch.distributions.multivariate_normal import MultivariateNormal
+from torch.distributions.normal import Normal
 
 from laplace.curvature.asdfghjkl import AsdfghjklHessian
 from laplace.curvature.asdl import AsdlGGN
@@ -3444,7 +3446,7 @@ class MyLaplace(ParametricLaplace):
         joint: bool = False,
         diagonal_output: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if "asdl" in self._backend_cls.__name__.lower():
+        '''if "asdl" in self._backend_cls.__name__.lower():
             # Asdl's doesn't support backprop over Jacobians
             # falling back to functorch
             warnings.warn(
@@ -3458,23 +3460,40 @@ class MyLaplace(ParametricLaplace):
                 X, enable_backprop=self.enable_backprop
             )
         else:
-            Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+            Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)'''
 
         #Js = self.backend._get_refined_jacobians(X, y, Js, f_mu) -> Problema, no tengo y en test, no?
-        if joint:
+        
+        # Ahora mismo estamos probando regresión con salida en R
+        '''if joint: 
             f_mu = f_mu.flatten()  # (batch*out)
             f_var = self.functional_covariance(Js)  # (batch*out, batch*out)
         else:
             f_var = self.functional_variance(Js)  # (batch, out, out)
 
             if diagonal_output:
-                f_var = torch.diagonal(f_var, dim1=-2, dim2=-1)
+                f_var = torch.diagonal(f_var, dim1=-2, dim2=-1)'''
+        
+        
 
-        return (
+        #approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t P (theta-theta_MAP)
+        #approx_out = self.mean +
+        lklihood = Normal(loc=approx_out, scale=self.sigma_noise)
+
+        num_samples = 50
+        samples = self.sample(n_samples=num_samples)
+        
+        probs = lklihood.log_prob(samples).exp()
+
+        # La media es la salida de la red neuronal. f_mu =  # (batch, out)
+        f_var = probs.var(dim=0)  # (batch, out)
+
+        return (f_mu, f_var)
+        '''return (
             (f_mu.detach(), f_var.detach())
             if not self.enable_backprop
             else (f_mu, f_var)
-        )
+        )'''
 
     def sample(
         self, n_samples: int = 100, generator: torch.Generator | None = None

@@ -586,28 +586,26 @@ class MyInterface(CurvatureInterface):
             ps = torch.softmax(f, dim=-1)
             G = torch.diag_embed(ps) - torch.einsum("mk,mc->mck", ps, ps)
             return G
-        
+        # Crear función hessian_vector_product. Esta se llama también en baselaplace.py
     def _get_refined_jacobians(
         self,
-        x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        fx,
         y: torch.Tensor,
         Js,
-        f,
         **kwargs: dict[str, Any]
     ):
-
         # Multiplicación eficiente por el hess
         # Poniendo z = Jacobiano, Hz es el Hessiano. Iterando, converge. No hacer estandarización en el método de la potencia.
-        def jacobian_vector_product(Js, z):
+        def jacobian_vector_product(params_dict, buffers_dict):
             #Js, f = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
             #Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
             #Js = torch.cat(Js, dim=-1)
-            #out = torch.sum(Js.unsqueeze(-2) * z, axis = -1)
+            out = torch.einsum("bop,bop->bo", Js, z)
             # Js de la función jacobians tiene shape (batch, parameters, outputs)
             # Sin embargo, Js de la función last_layer_jacobians tiene shape (batch, outputs, parameters) -> Es necesario permutar????
             # Los jac son iguales en lastlayer para todas las salidas (es lineal). No vamos a usar last layer en principio.
             #import pdb; pdb.set_trace() # Punto de ruptura para chequear que está todo bien. Comprobar que coincide con la mult no eficiente.
-            out = torch.sum(Js * z, dim=1) if self.last_layer else torch.sum(Js * z, dim=2)
+            #out = torch.sum(Js * z, dim=1) if self.last_layer else torch.sum(Js * z, dim=2) # Esto debería devolver dim (b,p)
             
             return out, out #Hz, f =  torch.func.jacrev(jacobian_vector_product, has_aux=True)(z)
 
@@ -618,16 +616,25 @@ class MyInterface(CurvatureInterface):
             #JJ = torch.einsum("bcp,bcq->pq", Js, Js)
             #JJz = torch.einsum("pq,bq->bp", JJ, z)
             # Con estas sí:
-            Jz = torch.einsum("bcp,bcp->b", Js, z) # Esto debería ser un escalar (J^t * z). Cambiar los índices del einsum.
-            JJz = torch.einsum("bcp,b->bp", Js, Jz)
+            # Creo que si se usa self.last_layer, Js tiene shape bop, luego igual que se tiene en cuenta en jacobian_vector_product, se debe tener aquí.
+            # Aunque ahora mismo solo nos vamos a centrar en el caso de last_layer=False.
+            Jz = torch.einsum("bop,bop->bo", Js, z) # Esto debería ser un escalar (J^t * z). Cambiar los índices del einsum.
+            JJz = torch.einsum("bop,bo->bop", Js, Jz)
+    
+            Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(self.params_dict, self.buffers_dict)
+            #import pdb; pdb.set_trace()
+            Hz = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values()) ]
+            Hz = torch.cat(Hz, dim=-1)
 
-            Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(Js,z)
             # Es necesario multiplicar por el residuo? O lo hace ya en H_lik? El producto de la precisión posterior por 1/var parece que se hace en posterior_precision de Laplace.
             # No puedo calcular el residuo en test, no?
-            Hz *= (f(x)-y) # Modificar esta multiplicación teniendo en cuenta que f(x)-y es un vector (hacer todas las operaciones teniendo el batch en cuenta).
+            #Hz *= (f(x)-y) # Modificar esta multiplicación teniendo en cuenta que f(x)-y es un vector (hacer todas las operaciones teniendo el batch en cuenta).
             # Que coincida con # Js de la función jacobians tiene shape (batch, parameters, outputs)
+            res = fx - y
+            Hz = torch.einsum("bop,bo->bop", Hz, res)
 
             z = JJz + Hz
+            z = z.detach()
 
         return z
     
@@ -661,7 +668,7 @@ class MyInterface(CurvatureInterface):
             else self._get_functional_hessian(f)
         )
         # Estamos aproximando nuestros factores cuadráticos por lineal. Así se queda todo parecido a la aproximación LLA.
-        refined_Js = self._get_refined_jacobians(x, y, Js, f)
+        refined_Js = self._get_refined_jacobians(f, y, Js)
 
         if H_lik is not None:
             P = torch.einsum("bcp,bck,bkq->pq", refined_Js, H_lik, refined_Js)
