@@ -587,7 +587,33 @@ class MyInterface(CurvatureInterface):
             G = torch.diag_embed(ps) - torch.einsum("mk,mc->mck", ps, ps)
             return G
         
-    # Crear función hessian_vector_product. Esta se llama también en baselaplace.py
+    # Multiplicación eficiente por el hess
+    def _hessian_vector_product(
+        self,
+        Js: torch.Tensor,
+        z: torch.Tensor,
+        **kwargs: dict[str, Any]
+    ) -> torch.Tensor:
+        """Compute the Hessian-vector product using the Jacobians Js and vector z.
+        This is used to refine the Jacobians in the GGN computation.
+        """
+        # Multiplicación eficiente por el hess
+        def jacobian_vector_product(params_dict, buffers_dict):
+            # Las siguientes líneas no son necesarias, ya que ya tenemos Js.
+            #Js, f = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
+            #Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
+            #Js = torch.cat(Js, dim=-1)
+            out = torch.einsum("bop,np->bon", Js, z)
+            return out, out
+
+        Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(self.params_dict, self.buffers_dict)
+        #import pdb; pdb.set_trace()
+        Hz = [j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values())]
+        Hz = torch.cat(Hz, dim=-1)
+
+        return Hz
+    
+    # Refinamiento de los Jacobianos para el GGN
     def _get_refined_jacobians(
         self,
         fx,
@@ -624,8 +650,19 @@ class MyInterface(CurvatureInterface):
 
             # Actualizamos z
             z = JJz + Hz
+            # Normalizamos z
+            norm = torch.linalg.norm(z, dim=-1, keepdim=True)
+            try:
+                z = z / norm
+            except RuntimeError:
+                print("Warning: zero norm encountered in GGN refinement.")
+                pass
+            
             z = z.detach()
 
+        # El resultado es el vector estandarizado por la raíz cuadrada de su última norma
+        z = torch.sqrt(norm) * z
+        z = z.detach()
         return z
     
     def full(

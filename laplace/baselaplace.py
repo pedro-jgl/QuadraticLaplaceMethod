@@ -3449,13 +3449,23 @@ class MyLaplace(ParametricLaplace):
         thetas = self.sample(n_samples=num_samples)
         Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
 
-        #approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t P (theta-theta_MAP)
-        approx_out = self.model(X) + Js @ (thetas - self.mean) + 0.5 * (thetas - self.mean) @ self.posterior_scale @ (thetas - self.mean).T # Revisar esta línea
-        # Cambiar el último producto por una función hessian_vector_product.
+        # approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
+        # Expandimos f_mu para que tenga la forma (batch, out, n_samples)
+        f_mu_nsamples = f_mu.unsqueeze(-1).expand(-1, -1, num_samples)  # (batch, out, n_samples)
+
+        # Js^t (theta-theta_MAP)
+        lin_summand = torch.einsum("bop,np->bon", Js, thetas - self.mean)  # (batch, out, n_samples)
+
+        # H (theta-theta_MAP)
+        Hz = self.backend._hessian_vector_product(Js, thetas - self.mean)
+        # 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
+        quad_summand = 0.5 * torch.einsum("np,bonp->bon", thetas - self.mean, Hz)  # (batch, out, n_samples)
+        
+        approx_out = f_mu_nsamples + lin_summand + quad_summand
 
         # La media es la salida de la red neuronal
         # La varianza se aproxima con montecarlo
-        f_var = approx_out.var(dim=0, unbiased=False)  # (batch, out) unbiased false o true?
+        f_var = approx_out.var(dim=-1)
 
         return (f_mu, f_var)
 
