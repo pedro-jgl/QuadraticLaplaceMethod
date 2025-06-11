@@ -3468,6 +3468,34 @@ class MyLaplace(ParametricLaplace):
         f_var = approx_out.var(dim=-1)
 
         return (f_mu, f_var)
+    
+    @torch.enable_grad()
+    def _glm_predictive_distribution_noextra(
+        self,
+        X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        joint: bool = False,
+        diagonal_output: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:        
+        # Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
+        # Simulación montecarlo
+        num_samples = 50
+        thetas = self.sample(n_samples=num_samples)
+        Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+
+        # approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
+        # Expandimos f_mu para que tenga la forma (batch, out, n_samples)
+        f_mu_nsamples = f_mu.unsqueeze(-1).expand(-1, -1, num_samples)  # (batch, out, n_samples)
+
+        # Js^t (theta-theta_MAP)
+        lin_summand = torch.einsum("bop,np->bon", Js, thetas - self.mean)  # (batch, out, n_samples)
+        
+        approx_out = f_mu_nsamples + lin_summand
+
+        # La media es la salida de la red neuronal
+        # La varianza se aproxima con montecarlo
+        f_var = approx_out.var(dim=-1)
+
+        return (f_mu, f_var)
 
     def sample(
         self, n_samples: int = 100, generator: torch.Generator | None = None
