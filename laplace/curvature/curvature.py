@@ -5,6 +5,7 @@ from typing import Any, Callable, MutableMapping
 import torch
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
+from torch.autograd.functional import hvp
 
 from laplace.utils import Kron, Likelihood
 
@@ -88,7 +89,7 @@ class CurvatureInterface:
     def jacobians(
         self,
         x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
-        enable_backprop: bool = False,
+        enable_backprop: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute Jacobians \\(\\nabla_{\\theta} f(x;\\theta)\\) at current parameter \\(\\theta\\),
         via torch.func.
@@ -131,7 +132,7 @@ class CurvatureInterface:
     def last_layer_jacobians(
         self,
         x: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
-        enable_backprop: bool = False,
+        enable_backprop: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Compute Jacobians \\(\\nabla_{\\theta_\\textrm{last}} f(x;\\theta_\\textrm{last})\\)
         only at current last-layer parameter \\(\\theta_{\\textrm{last}}\\).
@@ -590,43 +591,51 @@ class MyInterface(CurvatureInterface):
     # Multiplicación eficiente por el hess
     def _hessian_vector_product(
         self,
-        Js: torch.Tensor,
+        X: torch.Tensor,
         z: torch.Tensor,
         **kwargs: dict[str, Any]
     ) -> torch.Tensor:
         """Compute the Hessian-vector product using the Jacobians Js and vector z.
         This is used to refine the Jacobians in the GGN computation.
         """
+        def model_fn_params_only(params_dict, buffers_dict):
+            out = torch.func.functional_call(self.model, (params_dict, buffers_dict), X)
+            return out, out
+        
         # Multiplicación eficiente por el hess
         def jacobian_vector_product(params_dict, buffers_dict):
-            # Las siguientes líneas no son necesarias, ya que ya tenemos Js.
-            #Js, f = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
-            #Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
-            #Js = torch.cat(Js, dim=-1)
+            Js, _ = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
+            Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
+            Js = torch.cat(Js, dim=-1)
             out = torch.einsum("bop,np->bon", Js, z)
+
             return out, out
 
         Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(self.params_dict, self.buffers_dict)
-        #import pdb; pdb.set_trace()
-        Hz = [j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values())]
+        Hz = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values()) ]
         Hz = torch.cat(Hz, dim=-1)
+        #import pdb; pdb.set_trace()
 
         return Hz
     
     # Refinamiento de los Jacobianos para el GGN
     def _get_refined_jacobians(
         self,
+        x,
         fx,
         y: torch.Tensor,
         Js,
         **kwargs: dict[str, Any]
     ):
+        def model_fn_params_only(params_dict, buffers_dict):
+            out = torch.func.functional_call(self.model, (params_dict, buffers_dict), x)
+            return out, out
+        
         # Multiplicación eficiente por el hess
         def jacobian_vector_product(params_dict, buffers_dict):
-            # Las siguientes líneas no son necesarias, ya que ya tenemos Js.
-            #Js, f = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
-            #Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
-            #Js = torch.cat(Js, dim=-1)
+            Js, _ = torch.func.jacrev(model_fn_params_only, has_aux=True)(params_dict, buffers_dict)
+            Js = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Js.values(), params_dict.values()) ]
+            Js = torch.cat(Js, dim=-1)
             out = torch.einsum("bop,bop->bo", Js, z)
 
             return out, out
@@ -641,9 +650,20 @@ class MyInterface(CurvatureInterface):
 
             # Calculamos el producto del Hessiano por z sin tener explícitamente el Hessiano.
             Hz, _ = torch.func.jacrev(jacobian_vector_product, has_aux=True)(self.params_dict, self.buffers_dict)
-            #import pdb; pdb.set_trace()
             Hz = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values()) ]
             Hz = torch.cat(Hz, dim=-1)
+            #import pdb; pdb.set_trace()
+
+            '''H, f =  torch.func.jacrev(torch.func.jacrev(model_fn_params_only, has_aux=True), has_aux=True)(self.params_dict, self.buffers_dict)
+
+            l = list()
+            for j, p in zip(H.values(), self.params_dict.values()): 
+                H_tmp = [ j2.flatten(start_dim=-p2.dim()).flatten(start_dim = -(p.dim()+1), end_dim=-2) for j2, p2 in zip(j.values(), self.params_dict.values()) ]
+                H_tmp = torch.cat(H_tmp, dim=-1)
+                l.append(H_tmp)
+
+            H_full = torch.cat(l, dim=-2)
+            import pdb; pdb.set_trace()'''
 
             res = fx - y
             Hz = torch.einsum("bop,bo->bop", Hz, res)
@@ -695,7 +715,7 @@ class MyInterface(CurvatureInterface):
             else self._get_functional_hessian(f)
         )
         # Estamos aproximando nuestros factores cuadráticos por lineal. Así se queda todo parecido a la aproximación LLA.
-        refined_Js = self._get_refined_jacobians(f, y, Js)
+        refined_Js = self._get_refined_jacobians(x, f, y, Js)
 
         if H_lik is not None:
             P = torch.einsum("bcp,bck,bkq->pq", refined_Js, H_lik, refined_Js)

@@ -3447,20 +3447,22 @@ class MyLaplace(ParametricLaplace):
         # Simulación montecarlo
         num_samples = 50
         thetas = self.sample(n_samples=num_samples)
-        Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+        Js, f_mu = self.backend.jacobians(X)
 
         # approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
         # Expandimos f_mu para que tenga la forma (batch, out, n_samples)
         f_mu_nsamples = f_mu.unsqueeze(-1).expand(-1, -1, num_samples)  # (batch, out, n_samples)
 
         # Js^t (theta-theta_MAP)
-        lin_summand = torch.einsum("bop,np->bon", Js, thetas - self.mean)  # (batch, out, n_samples)
+        z = thetas - self.mean
+        z = z.detach()
+        lin_summand = torch.einsum("bop,np->bon", Js, z)  # (batch, out, n_samples)
 
         # H (theta-theta_MAP)
-        Hz = self.backend._hessian_vector_product(Js, thetas - self.mean)
+        Hz = self.backend._hessian_vector_product(X, z)
         # 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
-        quad_summand = 0.5 * torch.einsum("np,bonp->bon", thetas - self.mean, Hz)  # (batch, out, n_samples)
-        
+        quad_summand = 0.5 * torch.einsum("np,bonp->bon", z, Hz)  # (batch, out, n_samples)
+        #import pdb; pdb.set_trace()
         approx_out = f_mu_nsamples + lin_summand + quad_summand
 
         # La media es la salida de la red neuronal

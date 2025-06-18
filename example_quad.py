@@ -34,7 +34,7 @@ torch.manual_seed(params["seed"])
 dataset = get_dataset("synthetic2")
 train_dataset, train_test_dataset, test_dataset = dataset.get_split()
 
-batch_size = 100
+batch_size = 2
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle = True)
 train_test_loader = DataLoader(train_test_dataset, batch_size=batch_size)
 test_loader = DataLoader(test_dataset, batch_size=batch_size)
@@ -116,4 +116,4 @@ def distribution_plot(model_predictive, name = None):
         plt.savefig("./plots/" + name+ ".pdf", format="pdf", bbox_inches='tight')
     plt.show()
 
-distribution_plot(la._glm_predictive_distribution, "Quadratic")
+distribution_plot(la._glm_predictive_distribution)
