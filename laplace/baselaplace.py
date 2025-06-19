@@ -3427,13 +3427,13 @@ class MyLaplace(ParametricLaplace):
         delta = value - self.mean
         return delta @ self.posterior_precision @ delta
 
-    def functional_variance(self, refined_Js: torch.Tensor) -> torch.Tensor:
-        return torch.einsum("ncp,pq,nkq->nck", refined_Js, self.posterior_covariance, refined_Js)
+    def functional_variance(self, Js: torch.Tensor) -> torch.Tensor:
+        return torch.einsum("ncp,pq,nkq->nck", Js, self.posterior_covariance, Js)
 
-    def functional_covariance(self, refined_Js: torch.Tensor) -> torch.Tensor:
-        n_batch, n_outs, n_params = refined_Js.shape
-        refined_Js = refined_Js.reshape(n_batch * n_outs, n_params)
-        return torch.einsum("np,pq,mq->nm", refined_Js, self.posterior_covariance, refined_Js)
+    def functional_covariance(self, Js: torch.Tensor) -> torch.Tensor:
+        n_batch, n_outs, n_params = Js.shape
+        Js = Js.reshape(n_batch * n_outs, n_params)
+        return torch.einsum("np,pq,mq->nm", Js, self.posterior_covariance, Js)
     
     # Utilizar montecarlo (50 samples más o menos de la posterior) para aproximar la distribución predictiva.
     @torch.enable_grad()
@@ -3442,6 +3442,7 @@ class MyLaplace(ParametricLaplace):
         X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
         joint: bool = False,
         diagonal_output: bool = False,
+        noextra: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:        
         # Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
         # Simulación montecarlo
@@ -3457,47 +3458,96 @@ class MyLaplace(ParametricLaplace):
         z = thetas - self.mean
         z = z.detach()
         lin_summand = torch.einsum("bop,np->bon", Js, z)  # (batch, out, n_samples)
+        if noextra:
+            approx_out = f_mu_nsamples + lin_summand
+        else:
+            # H (theta-theta_MAP)
+            Hz = self.backend._hessian_vector_product(X, z)
+            # 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
+            quad_summand = 0.5 * torch.einsum("np,bonp->bon", z, Hz)  # (batch, out, n_samples)
+            #import pdb; pdb.set_trace()
+            approx_out = f_mu_nsamples + lin_summand + quad_summand
+        
+        '''# Calculamos la varianza exacta para comparar
+        # J'\Sigma J + 0.5*tr(H \Sigma H \Sigma)
+        H = self.backend.hessian(X)
+        prod = torch.matmul(H, self.posterior_covariance)
+        squared_prod = torch.matmul(prod, prod)
+        trace = torch.diagonal(squared_prod, dim1=-2, dim2=-1).sum(dim=-1).unsqueeze(-1)
+        var = self.functional_variance(Js) + 0.5 * trace
 
-        # H (theta-theta_MAP)
-        Hz = self.backend._hessian_vector_product(X, z)
-        # 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
-        quad_summand = 0.5 * torch.einsum("np,bonp->bon", z, Hz)  # (batch, out, n_samples)
-        #import pdb; pdb.set_trace()
-        approx_out = f_mu_nsamples + lin_summand + quad_summand
-
+        # Probamos otra forma de aproximar la varianza. Varianza muestral
+        # 1/S sumi ((approx_outi - f_mu)^2)
+        fx_theta = approx_out - f_mu_nsamples  # (batch, out, n_samples)
+        # Elevamos al cuadrado
+        fx_theta_squared = fx_theta ** 2  # (batch, out, n_samples
+        # Calculamos la varianza muestral
+        segunda_approx = fx_theta_squared.mean(dim=-1)  # (batch, out)'''
+        
         # La media es la salida de la red neuronal
         # La varianza se aproxima con montecarlo
         f_var = approx_out.var(dim=-1)
+        #import pdb; pdb.set_trace()
 
         return (f_mu, f_var)
     
     @torch.enable_grad()
-    def _glm_predictive_distribution_noextra(
+    def _predictive_distribution(
         self,
-        X: torch.Tensor | MutableMapping[str, torch.Tensor | Any],
+        X: torch.Tensor,
+        batch_size: int | None = None,
         joint: bool = False,
         diagonal_output: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor]:        
-        # Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
-        # Simulación montecarlo
-        num_samples = 50
-        thetas = self.sample(n_samples=num_samples)
-        Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+        noextra: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute predictive mean and variance on input tensor X, optionally in batches.
 
-        # approx_out = f(x,theta_MAP) + Js^t (theta-theta_MAP) + 1/2 (theta-theta_MAP)^t H (theta-theta_MAP)
-        # Expandimos f_mu para que tenga la forma (batch, out, n_samples)
-        f_mu_nsamples = f_mu.unsqueeze(-1).expand(-1, -1, num_samples)  # (batch, out, n_samples)
+        Parameters
+        ----------
+        X : torch.Tensor
+            Input features of shape (N, ...).
+        batch_size : int or None
+            If provided, split X into batches of this size; otherwise process all at once.
+        joint : bool
+            If True, compute full joint covariance; ignored here.
+        diagonal_output : bool
+            If True, only return diagonal of output covariance; ignored here.
+        noextra : bool
+            If True, use simplified approximation (ignores Hessian).
 
-        # Js^t (theta-theta_MAP)
-        lin_summand = torch.einsum("bop,np->bon", Js, thetas - self.mean)  # (batch, out, n_samples)
-        
-        approx_out = f_mu_nsamples + lin_summand
+        Returns
+        -------
+        f_mu : Tensor[N, out]
+            Predictive mean for all N inputs.
+        f_var : Tensor[N, out]
+            Predictive marginal variances for all N inputs.
+        """
+        # If no batching requested, run full-tensor prediction
+        if batch_size is None:
+            mu, var = self._glm_predictive_distribution(
+                X.to(self._device), joint=joint,
+                diagonal_output=diagonal_output, noextra=noextra
+            )
+            return mu.detach().cpu(), var.detach().cpu()
 
-        # La media es la salida de la red neuronal
-        # La varianza se aproxima con montecarlo
-        f_var = approx_out.var(dim=-1)
-
-        return (f_mu, f_var)
+        # Batched prediction
+        all_mu = []
+        all_var = []
+        N = X.shape[0]
+        for start in range(0, N, batch_size):
+            end = min(start + batch_size, N)
+            X_batch = X[start:end].to(self._device)
+            mu_b, var_b = self._glm_predictive_distribution(
+                X_batch, joint=joint,
+                diagonal_output=diagonal_output, noextra=noextra
+            )
+            all_mu.append(mu_b.detach().cpu())
+            all_var.append(var_b.detach().cpu())
+        #import pdb; pdb.set_trace()
+        f_mu = torch.cat(all_mu, dim=0)
+        f_var = torch.cat(all_var, dim=0)
+        return f_mu, f_var
 
     def sample(
         self, n_samples: int = 100, generator: torch.Generator | None = None

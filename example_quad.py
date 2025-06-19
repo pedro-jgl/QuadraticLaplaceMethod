@@ -85,7 +85,7 @@ log_variance = -5.5347821004082105
 def distribution_plot(model_predictive, name = None):
     plt.rcParams["pdf.fonttype"] = 42
     plt.figure(figsize=(16,7))
-    mean, var = model_predictive(torch.tensor(test_dataset.inputs, dtype = params["dtype"]))
+    mean, var = model_predictive(torch.tensor(test_dataset.inputs, dtype = params["dtype"]), batch_size=batch_size)
     mean = mean.detach().numpy()
     var = var.detach().numpy() + np.exp(log_variance)
     std = np.sqrt(var).flatten()
@@ -116,4 +116,4 @@ def distribution_plot(model_predictive, name = None):
         plt.savefig("./plots/" + name+ ".pdf", format="pdf", bbox_inches='tight')
     plt.show()
 
-distribution_plot(la._glm_predictive_distribution)
+distribution_plot(la._predictive_distribution)

@@ -615,6 +615,7 @@ class MyInterface(CurvatureInterface):
         Hz = [ j.flatten(start_dim=-p.dim()) for j, p in zip(Hz.values(), self.params_dict.values()) ]
         Hz = torch.cat(Hz, dim=-1)
         #import pdb; pdb.set_trace()
+        
 
         return Hz
     
@@ -684,6 +685,22 @@ class MyInterface(CurvatureInterface):
         z = torch.sqrt(norm) * z
         z = z.detach()
         return z
+    
+    def hessian(self, X):
+        def model_fn_params_only(params_dict, buffers_dict):
+            out = torch.func.functional_call(self.model, (params_dict, buffers_dict), X)
+            return out, out
+        
+        H, f =  torch.func.jacrev(torch.func.jacrev(model_fn_params_only, has_aux=True), has_aux=True)(self.params_dict, self.buffers_dict)
+
+        l = list()
+        for j, p in zip(H.values(), self.params_dict.values()): 
+            H_tmp = [ j2.flatten(start_dim=-p2.dim()).flatten(start_dim = -(p.dim()+1), end_dim=-2) for j2, p2 in zip(j.values(), self.params_dict.values()) ]
+            H_tmp = torch.cat(H_tmp, dim=-1)
+            l.append(H_tmp)
+
+        H_full = torch.cat(l, dim=-2)
+        return H_full
     
     def full(
         self,
