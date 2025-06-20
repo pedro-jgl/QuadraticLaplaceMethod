@@ -34,6 +34,11 @@ torch.manual_seed(params["seed"])
 dataset = get_dataset("synthetic2")
 train_dataset, train_test_dataset, test_dataset = dataset.get_split()
 
+# Creamos un outlier. Comprobar si esto hace que cambie la cov posterior. (Y por tanto la distribución predictiva)
+# Hacer varias pruebas:
+# Añadir un outlier (train_dataset.targets[-1] = 10)
+# Añadir ruido gaussiano a todos los targets (train_dataset.targets += np.random.normal(0, 1, train_dataset.targets.shape))
+
 batch_size = 2
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle = True)
 train_test_loader = DataLoader(train_test_dataset, batch_size=batch_size)

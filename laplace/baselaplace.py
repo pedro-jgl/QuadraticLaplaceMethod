@@ -3483,6 +3483,10 @@ class MyLaplace(ParametricLaplace):
         fx_theta_squared = fx_theta ** 2  # (batch, out, n_samples
         # Calculamos la varianza muestral
         segunda_approx = fx_theta_squared.mean(dim=-1)  # (batch, out)'''
+
+        # Tercera forma, predecir la salida con la red con los pesos sampleados y calcular la varianza
+        # Para comprobar que está bien (método que dado un vector de pesos, te de predicciones)
+        # Comprobar el método pasándo los parámetros y la red en sí
         
         # La media es la salida de la red neuronal
         # La varianza se aproxima con montecarlo

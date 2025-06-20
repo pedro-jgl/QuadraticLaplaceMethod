@@ -644,6 +644,7 @@ class MyInterface(CurvatureInterface):
         # Método de la potencia sin normalización. 
         # Empezamos con z=Js y lo refinamos.
         z = Js.detach().clone()
+        #z = torch.randn_like(Js, device=Js.device, dtype=Js.dtype)
         for _ in range(10):
             # Con last_layer=false, parece que Js tiene shape bop (comprobar¿?)
             Jz = torch.einsum("bop,bop->bo", Js, z)
@@ -733,6 +734,8 @@ class MyInterface(CurvatureInterface):
         )
         # Estamos aproximando nuestros factores cuadráticos por lineal. Así se queda todo parecido a la aproximación LLA.
         refined_Js = self._get_refined_jacobians(x, f, y, Js)
+        # Comparar refined_Js con Js
+        #import pdb; pdb.set_trace()
 
         if H_lik is not None:
             P = torch.einsum("bcp,bck,bkq->pq", refined_Js, H_lik, refined_Js)
