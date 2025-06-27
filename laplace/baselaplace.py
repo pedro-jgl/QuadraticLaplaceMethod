@@ -3444,7 +3444,7 @@ class MyLaplace(ParametricLaplace):
         diagonal_output: bool = False,
         noextra: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:        
-        # Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
+        '''# Ahora mismo estamos probando regresión con salida en R, luego suponemos joint=false (calcularmos var, no covar)
         # Simulación montecarlo
         num_samples = 50
         thetas = self.sample(n_samples=num_samples)
@@ -3468,7 +3468,7 @@ class MyLaplace(ParametricLaplace):
             #import pdb; pdb.set_trace()
             approx_out = f_mu_nsamples + lin_summand + quad_summand
         
-        '''# Calculamos la varianza exacta para comparar
+        # Calculamos la varianza exacta para comparar
         # J'\Sigma J + 0.5*tr(H \Sigma H \Sigma)
         H = self.backend.hessian(X)
         prod = torch.matmul(H, self.posterior_covariance)
@@ -3482,7 +3482,7 @@ class MyLaplace(ParametricLaplace):
         # Elevamos al cuadrado
         fx_theta_squared = fx_theta ** 2  # (batch, out, n_samples
         # Calculamos la varianza muestral
-        segunda_approx = fx_theta_squared.mean(dim=-1)  # (batch, out)'''
+        segunda_approx = fx_theta_squared.mean(dim=-1)  # (batch, out)
 
         # Tercera forma, predecir la salida con la red con los pesos sampleados y calcular la varianza
         # Para comprobar que está bien (método que dado un vector de pesos, te de predicciones)
@@ -3493,7 +3493,37 @@ class MyLaplace(ParametricLaplace):
         f_var = approx_out.var(dim=-1)
         #import pdb; pdb.set_trace()
 
-        return (f_mu, f_var)
+        return (f_mu, f_var)'''
+        if "asdl" in self._backend_cls.__name__.lower():
+            # Asdl's doesn't support backprop over Jacobians
+            # falling back to functorch
+            warnings.warn(
+                "ASDL backend is used which does not support backprop through "
+                "the functional variance, but `self.enable_backprop = True`. "
+                "Falling back to using `self.backend.functorch_jacobians` "
+                "which can be memory intensive for large models."
+            )
+
+            Js, f_mu = self.backend.functorch_jacobians(
+                X, enable_backprop=self.enable_backprop
+            )
+        else:
+            Js, f_mu = self.backend.jacobians(X, enable_backprop=self.enable_backprop)
+
+        if joint:
+            f_mu = f_mu.flatten()  # (batch*out)
+            f_var = self.functional_covariance(Js)  # (batch*out, batch*out)
+        else:
+            f_var = self.functional_variance(Js)  # (batch, out, out)
+
+            if diagonal_output:
+                f_var = torch.diagonal(f_var, dim1=-2, dim2=-1)
+
+        return (
+            (f_mu.detach(), f_var.detach())
+            if not self.enable_backprop
+            else (f_mu, f_var)
+        )
     
     @torch.enable_grad()
     def _predictive_distribution(
