@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
+from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
 import torchvision.transforms as trn
 from torchvision.transforms.functional import rotate
@@ -749,6 +750,54 @@ class Taxi_Dataset(Dataset):
 
     def get_split(self, split, *args):
         return self.train, self.val, self.test
+    
+
+class Boston_Dataset(Dataset):
+    def __init__(self, test_size=0.2, val_size=0.1, random_state=0):
+        self.type = "regression"
+        self.output_dim = 1
+
+        # Fetch data
+        boston = fetch_openml("boston", version=1, as_frame=True)
+        X = boston.data.astype(float).to_numpy()
+        y = boston.target.astype(float).to_numpy().reshape(-1, 1)
+
+        # Split data
+        X_trainval, X_test, y_trainval, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_trainval, y_trainval, test_size=val_size, random_state=random_state
+        )
+
+        self.train = Training_Dataset(
+            X_train, y_train, self.output_dim,
+            normalize_inputs=True, normalize_targets=False
+        )
+        self.val = Test_Dataset(
+            X_val, self.output_dim, y_val,
+            inputs_mean=self.train.inputs_mean,
+            inputs_std=self.train.inputs_std
+        )
+        self.test = Test_Dataset(
+            X_test, self.output_dim, y_test,
+            inputs_mean=self.train.inputs_mean,
+            inputs_std=self.train.inputs_std
+        )
+
+        self.input_dim = X.shape[1]
+        self.n_train = len(self.train)
+
+    def __len__(self):
+        return len(self.train) + len(self.val) + len(self.test)
+    
+    def len_train(self):
+        return self.n_train
+    
+    def get_split(self, *args):
+        return self.train, self.val, self.test
+
 
         
 def get_dataset(dataset_name):
@@ -760,7 +809,8 @@ def get_dataset(dataset_name):
         "CIFAR10": CIFAR10_Dataset,
         "Airline": Airline_Dataset,
         "Year": Year_Dataset,
-        "Taxi": Taxi_Dataset
+        "Taxi": Taxi_Dataset,
+        "Boston": Boston_Dataset
     }
 
     return d[dataset_name]()
