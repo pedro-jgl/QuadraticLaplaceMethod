@@ -752,6 +752,9 @@ class Taxi_Dataset(Dataset):
         return self.train, self.val, self.test
     
 
+# Intentar considerar distintas particiones (hay pocos datos, en las otras clases de este doc hay más)
+# Promediar sobre 20 particiones o así
+# Si al final no se usa val, eliminar la partición
 class Boston_Dataset(Dataset):
     def __init__(self, test_size=0.2, val_size=0.1, random_state=0):
         self.type = "regression"
@@ -770,7 +773,11 @@ class Boston_Dataset(Dataset):
         X_train, X_val, y_train, y_val = train_test_split(
             X_trainval, y_trainval, test_size=val_size, random_state=random_state
         )
+        # Normalizar también los targets -> entonces tenemos que tener cuidado al calcular el error (debe ser en el espacio original)
+        # Si consideramos el espacio original, los errores son relativos al dataset, va a cambiar de uno a otro.
+        # Notar que también cambia la dist predictiva si entrenamos en el espacio transformado.
 
+        # Hacer las predicciones en el espacio original, así voy a poder usar el código de métricas.
         self.train = Training_Dataset(
             X_train, y_train, self.output_dim,
             normalize_inputs=True, normalize_targets=False
