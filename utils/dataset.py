@@ -14,6 +14,7 @@ import torchvision.transforms as trn
 from torchvision.transforms.functional import rotate
 from torchvision.transforms import GaussianBlur
 import torch
+from sklearn.model_selection import KFold
 
 class Training_Dataset(Dataset):
     def __init__(
@@ -754,56 +755,74 @@ class Taxi_Dataset(Dataset):
 
 # Intentar considerar distintas particiones (hay pocos datos, en las otras clases de este doc hay más)
 # Promediar sobre 20 particiones o así
-# Si al final no se usa val, eliminar la partición
 class Boston_Dataset(Dataset):
-    def __init__(self, test_size=0.2, val_size=0.1, random_state=0):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle = True, random_state=None):
         self.type = "regression"
         self.output_dim = 1
+        self.val_size = val_size
+        self.random_state = random_state
 
-        # Fetch data
+        # Load data
         boston = fetch_openml("boston", version=1, as_frame=True)
-        X = boston.data.astype(float).to_numpy()
-        y = boston.target.astype(float).to_numpy().reshape(-1, 1)
+        self.X = boston.data.astype(float).to_numpy()
+        self.y = boston.target.astype(float).to_numpy().reshape(-1, 1)
+        self.len_data = self.X.shape[0]
+        self.input_dim = self.X.shape[1]
 
-        # Split data
-        X_trainval, X_test, y_trainval, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-
-        X_train, X_val, y_train, y_val = train_test_split(
-            X_trainval, y_trainval, test_size=val_size, random_state=random_state
-        )
-        # Normalizar también los targets -> entonces tenemos que tener cuidado al calcular el error (debe ser en el espacio original)
-        # Si consideramos el espacio original, los errores son relativos al dataset, va a cambiar de uno a otro.
-        # Notar que también cambia la dist predictiva si entrenamos en el espacio transformado.
-
-        # Hacer las predicciones en el espacio original, así voy a poder usar el código de métricas.
-        self.train = Training_Dataset(
-            X_train, y_train, self.output_dim,
-            normalize_inputs=True, normalize_targets=False
-        )
-        self.val = Test_Dataset(
-            X_val, self.output_dim, y_val,
-            inputs_mean=self.train.inputs_mean,
-            inputs_std=self.train.inputs_std
-        )
-        self.test = Test_Dataset(
-            X_test, self.output_dim, y_test,
-            inputs_mean=self.train.inputs_mean,
-            inputs_std=self.train.inputs_std
-        )
-
-        self.input_dim = X.shape[1]
-        self.n_train = len(self.train)
+        # Set up KFold
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_splits
 
     def __len__(self):
-        return len(self.train) + len(self.val) + len(self.test)
+        return self.len_data
     
-    def len_train(self):
-        return self.n_train
-    
+    # get_splits
     def get_split(self, *args):
-        return self.train, self.val, self.test
+        for trainval_idx, test_idx in self.kf.split(self.X):
+            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
+            X_test, y_test = self.X[test_idx], self.y[test_idx]
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar también los targets -> entonces tenemos que tener cuidado al calcular el error (debe ser en el espacio original)
+            # Si consideramos el espacio original, los errores son relativos al dataset, va a cambiar de uno a otro.
+            # Notar que también cambia la dist predictiva si entrenamos en el espacio transformado.
+
+            # Hacer las predicciones en el espacio original, así voy a poder usar el código de métricas.
+
+            # Normalizar inputs y targets
+            # Entrenar con los datos normalizados. Normalizar test para predecir y esto me da predicciones en el espacio transformado.
+            # Para obtener las predicciones en el espacio original, tengo que deshacer la normalización de los targets.
+            # Para ello, hago preds*stqrt(targets_std) + targets_mean 
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=False
+                )
+            
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
 
 
         
