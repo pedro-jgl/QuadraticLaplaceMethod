@@ -777,7 +777,7 @@ class Boston_Dataset(Dataset):
         return self.len_data
     
     # get_splits
-    def get_split(self, *args):
+    def get_splits(self, *args):
         for trainval_idx, test_idx in self.kf.split(self.X):
             X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
             X_test, y_test = self.X[test_idx], self.y[test_idx]
@@ -802,7 +802,7 @@ class Boston_Dataset(Dataset):
             # Para ello, hago preds*stqrt(targets_std) + targets_mean 
             train_ds = Training_Dataset(
                 X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=False
+                normalize_inputs=True, normalize_targets=True
                 )
             
             if self.val_size > 0:
