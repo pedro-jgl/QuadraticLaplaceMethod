@@ -17,6 +17,7 @@ import argparse
 
 
 parser = argparse.ArgumentParser(description="Boston Housing Dataset Analysis")
+parser.add_argument('--name', type=str, required=True, help="Name of the approximation (e.g., 'lla', 'qla')")
 parser.add_argument('--subset', type=str, required=True, help="Subset of weights to consider (all, last_layer, subnetwork)")
 parser.add_argument('--hessian', type=str, required=True, help="Hessian structure (full, kron, diag, lowrank, quad)")
 args = parser.parse_args()
@@ -79,7 +80,7 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
     # Load the best weights
     f.load_state_dict(torch.load(f"boston/best_mlp_fold_{fold_idx}.pt"))
 
-    # LLA
+    # Laplace approximation
     subset = args.subset
     hessian = args.hessian
     X = test_ds.inputs
@@ -120,12 +121,12 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
         device=params["device"]
     )
 
-    lla_reg = Regression()
-    lla_reg.update(y_true, mean_torch, var_torch)
+    la_reg = Regression()
+    la_reg.update(y_true, mean_torch, var_torch)
 
     # Save metrics
-    metrics_df = pd.DataFrame([lla_reg.get_dict()])
-    metrics_df.to_csv(f"boston/lla_metrics_fold_{fold_idx}.csv", index=False)
+    metrics_df = pd.DataFrame([la_reg.get_dict()])
+    metrics_df.to_csv(f"boston/{args.name}_metrics_fold_{fold_idx}.csv", index=False)
 
 
 
