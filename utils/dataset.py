@@ -826,7 +826,7 @@ class Boston_Dataset(Dataset):
 
 
         
-def get_dataset(dataset_name):
+def get_dataset(dataset_name, random_state=None):
     d = {
         "synthetic": Synthetic_Dataset,
         "synthetic2": Synthetic2_Dataset,
@@ -836,7 +836,7 @@ def get_dataset(dataset_name):
         "Airline": Airline_Dataset,
         "Year": Year_Dataset,
         "Taxi": Taxi_Dataset,
-        "Boston": Boston_Dataset
+        "Boston": Boston_Dataset(random_state=random_state)
     }
 
     return d[dataset_name]()

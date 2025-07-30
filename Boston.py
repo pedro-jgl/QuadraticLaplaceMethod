@@ -21,19 +21,20 @@ params = {
         "MAP_lr": 0.001,
         "MAP_iterations": 3000,
         "lr": 0.001,    # 0.01 o 0.001 
-        "epochs": 200,    # Dejar fijo en un valor grande
+        "epochs": 200,    # Echar un vistazo a loss y ver si se estabiliza (a lo mejor converge con 50 épocas)
         "activation": torch.nn.Tanh,
         "device": "cpu",
         "dtype": torch.float64,
         "seed": 2147483647,
         "bb_alpha": 0,
         "prior_std": 1,
-        "ll_std": 1
+        "ll_std": 1,
+        "batch_size": 100
 }
 
 # Cambiar para establecer semilla!!!!!!!!!!!!!!!!
 torch.manual_seed(params["seed"])
-dataset = get_dataset("Boston")
+dataset = get_dataset("Boston", random_state=params["seed"])
 
 # ----- MLP with K-Fold Cross-Validation -----
 mlp_rmse_folds, mlp_mae_folds = [], []
@@ -65,6 +66,8 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
     best_cfg = None
     best_score = float('inf')
 
+    # Hacer una función ajustar hiper y meter esto para que quede más limpio
+    # Paralelizar (se puede paralelizar los splits y el probar con las distintas aproximaciones de laplace)
     # Grid search with internal 5-fold CV
     for num_layers in grid['num_layers']:
         for hidden_units in grid['hidden_units']:
@@ -74,8 +77,8 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
                     sub_train = torch.utils.data.Subset(train_ds, train_idx)
                     sub_val   = torch.utils.data.Subset(train_ds, val_idx)
 
-                    train_loader = DataLoader(sub_train, batch_size=2, shuffle=True)
-                    val_loader   = DataLoader(sub_val,   batch_size=2, shuffle=False)
+                    train_loader = DataLoader(sub_train, batch_size=params['batch_size'], shuffle=True)
+                    val_loader   = DataLoader(sub_val,   batch_size=params['batch_size'], shuffle=False)
 
                     # Build model
                     inner_dims = [hidden_units] * num_layers
@@ -132,7 +135,7 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
 
     # Retrain best on full train(+val) data
     train_full = torch.utils.data.ConcatDataset([train_ds, val_ds]) if val_ds is not None else train_ds
-    loader_full = DataLoader(train_full, batch_size=2, shuffle=True)
+    loader_full = DataLoader(train_full, batch_size=params['batch_size'], shuffle=True)
 
     inner_dims = [best_cfg['hidden_units']] * best_cfg['num_layers']
     f_best = get_mlp(
@@ -166,7 +169,7 @@ for fold_idx, splits in enumerate(dataset.get_splits(), start=1):
     end = timer()
 
     # Evaluate on test
-    test_loader = DataLoader(test_ds, batch_size=2, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=params['batch_size'], shuffle=False)
     f_best.eval()
     preds, targets = [], []
     with torch.no_grad():

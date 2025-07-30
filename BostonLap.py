@@ -41,7 +41,7 @@ params = {
 }
 
 torch.manual_seed(params["seed"])
-dataset = get_dataset("Boston")
+dataset = get_dataset("Boston", random_state=params["seed"])
 
 # ----- MLP -----
 # Load the best configuration from the CSV
