@@ -836,7 +836,7 @@ def get_dataset(dataset_name, random_state=None):
         "Airline": Airline_Dataset,
         "Year": Year_Dataset,
         "Taxi": Taxi_Dataset,
-        "Boston": Boston_Dataset(random_state=random_state)
+        "Boston": Boston_Dataset
     }
 
-    return d[dataset_name]()
+    return d[dataset_name](random_state=random_state)
