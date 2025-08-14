@@ -107,6 +107,7 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, param
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Boston Housing Dataset Analysis")
+    parser.add_argument('--dataset', type=str, required=True, help="Name of the dataset (e.g., 'Boston', 'Energy')")
     parser.add_argument('--name', type=str, required=True, help="Name of the approximation (e.g., 'lla', 'qla')")
     parser.add_argument('--subset', type=str, required=True, help="Subset of weights to consider (all, last_layer, subnetwork)")
     parser.add_argument('--hessian', type=str, required=True, help="Hessian structure (full, kron, diag, lowrank, quad)")
@@ -127,7 +128,7 @@ if __name__ == "__main__":
             "bb_alpha": 0,
             "prior_std": 1,
             "ll_std": 1,
-            "batch_size": 2 
+            "batch_size": 32
     }
 
     torch.manual_seed(params["seed"])

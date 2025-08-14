@@ -13,30 +13,11 @@ from utils.pytorch_learning import fit_map
 from utils.metrics import *
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error
 from sklearn.model_selection import KFold
+import argparse
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 
-# ----- Initial configuration -----
-params = {
-        "num_inducing": 20,
-        "bnn_structure": [50, 50],
-        "MAP_lr": 0.001,
-        "MAP_iterations": 3000,
-        "lr": 0.001,    # 0.01 o 0.001 
-        "epochs": 200,    # Echar un vistazo a loss y ver si se estabiliza (a lo mejor converge con 50 épocas)
-        "activation": torch.nn.Tanh,
-        "device": "cpu",
-        "dtype": torch.float64,
-        "seed": 2147483647,
-        "bb_alpha": 0,
-        "prior_std": 1,
-        "ll_std": 1,
-        "batch_size": 100
-}
-
-torch.manual_seed(params["seed"])
-dataset = get_dataset("Boston", random_state=params["seed"])
 
 # Hyperparameter grid
 grid = {
@@ -45,7 +26,7 @@ grid = {
     'weight_decay': [0.0, 1e-4, 1e-3]
 }
 
-def run_fold(fold_idx, splits):
+def run_fold(fold_idx, splits, ds_name, params):
     # Unpack splits
     if len(splits) == 3:
         train_ds, val_ds, test_ds = splits
@@ -175,7 +156,7 @@ def run_fold(fold_idx, splits):
     mae  = torch.nn.functional.l1_loss(preds, targets).item()
 
     # Store model
-    torch.save(f_best.state_dict(), f"boston/best_mlp_fold_{fold_idx}.pt")
+    torch.save(f_best.state_dict(), f"{ds_name}/best_mlp_fold_{fold_idx}.pt")
 
     return {
         'fold': fold_idx,
@@ -190,12 +171,42 @@ def run_fold(fold_idx, splits):
     }
 
 if __name__ == "__main__":
-    n_procs = multiprocessing.cpu_count()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, required=True, help="Name of the dataset (e.g., 'boston', 'energy')")
+    args = parser.parse_args()
+
+    # ----- Initial configuration -----
+    params = {
+            "num_inducing": 20,
+            "bnn_structure": [50, 50],
+            "MAP_lr": 0.001,
+            "MAP_iterations": 3000,
+            "lr": 0.001,    # 0.01 o 0.001 
+            "epochs": 200,    # Echar un vistazo a loss y ver si se estabiliza (a lo mejor converge con 50 épocas)
+            "activation": torch.nn.Tanh,
+            "device": "cpu",
+            "dtype": torch.float64,
+            "seed": 2147483647,
+            "bb_alpha": 0,
+            "prior_std": 1,
+            "ll_std": 1,
+            "batch_size": 100
+    }
+
+    torch.manual_seed(params["seed"])
+    if args.dataset == "boston":
+        dataset = get_dataset("Boston", random_state=params["seed"])
+    elif args.dataset == "energy":
+        dataset = get_dataset("Energy", random_state=params["seed"])
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
+
+    n_procs = 4 # multiprocessing.cpu_count()
     splits_list = list(dataset.get_splits())
 
     results = []
     with ProcessPoolExecutor(max_workers=n_procs) as executor:
-        futures = {executor.submit(run_fold, fold_idx, splits): fold_idx for fold_idx, splits in enumerate(splits_list, start=1)}
+        futures = {executor.submit(run_fold, fold_idx, splits, args.dataset, params): fold_idx for fold_idx, splits in enumerate(splits_list, start=1)}
         for future in as_completed(futures):
             res = future.result()
             print(f"[Fold {res['fold']}] Best inner CV RMSE: {res['test_rmse']:.4f} with {res['num_layers']} layers and {res['hidden_units']} hidden units")
@@ -210,6 +221,6 @@ if __name__ == "__main__":
     print(f"MLP avg RMSE: {stats_df.loc['mean','test_rmse']:.4f} ± {stats_df.loc['std','test_rmse']:.4f}")
     print(f"MLP avg MAE: {stats_df.loc['mean','test_mae']:.4f} ± {stats_df.loc['std','test_mae']:.4f}")
 
-    best_cfg_df.to_csv("boston/boston_mlp_best_configs.csv", index=False)
-    train_stats.to_csv("boston/boston_train_targets_stats.csv", index=False)
+    best_cfg_df.to_csv(f"{args.dataset}/{args.dataset}_mlp_best_configs.csv", index=False)
+    train_stats.to_csv(f"{args.dataset}/{args.dataset}_train_targets_stats.csv", index=False)
 
