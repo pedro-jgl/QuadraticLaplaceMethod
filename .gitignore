@@ -141,5 +141,6 @@ state_dict.bin
 # Plots
 plots/
 
-# Boston Housing dataset
+# Datasets utils
 boston/
+energy/

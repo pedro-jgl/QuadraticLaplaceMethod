@@ -18,7 +18,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing
 
-def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, params):
+def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, ds_name, params):
     # Unpack splits
     if len(splits) == 3:
         train_ds, val_ds, test_ds = splits
@@ -46,7 +46,7 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, param
         dtype=params['dtype'],
     )
     # Load the best weights
-    f.load_state_dict(torch.load(f"boston/best_mlp_fold_{fold_idx}.pt"))
+    f.load_state_dict(torch.load(f"{ds_name}/best_mlp_fold_{fold_idx}.pt"))
 
     # Laplace approximation
     la = Laplace(f, "regression", subset_of_weights=subset, hessian_structure=hessian)
@@ -92,7 +92,7 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, param
 
     # Save metrics
     metrics_df = pd.DataFrame([la_reg.get_dict()])
-    metrics_df.to_csv(f"boston/{name}_metrics_fold_{fold_idx}.csv", index=False)
+    metrics_df.to_csv(f"{ds_name}/{name}_metrics_fold_{fold_idx}.csv", index=False)
 
     return {
         'fold': fold_idx,
@@ -107,7 +107,7 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, param
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Boston Housing Dataset Analysis")
-    parser.add_argument('--dataset', type=str, required=True, help="Name of the dataset (e.g., 'Boston', 'Energy')")
+    parser.add_argument('--dataset', type=str, required=True, help="Name of the dataset (e.g., 'boston', 'energy')")
     parser.add_argument('--name', type=str, required=True, help="Name of the approximation (e.g., 'lla', 'qla')")
     parser.add_argument('--subset', type=str, required=True, help="Subset of weights to consider (all, last_layer, subnetwork)")
     parser.add_argument('--hessian', type=str, required=True, help="Hessian structure (full, kron, diag, lowrank, quad)")
@@ -132,12 +132,17 @@ if __name__ == "__main__":
     }
 
     torch.manual_seed(params["seed"])
-    dataset = get_dataset("Boston", random_state=params["seed"])
+    if args.dataset == "boston":
+        dataset = get_dataset("Boston", random_state=params["seed"])
+    elif args.dataset == "energy":
+        dataset = get_dataset("Energy", random_state=params["seed"])
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
     # Load the best configuration from the CSV
-    best_cfg_df = pd.read_csv("boston/boston_mlp_best_configs.csv")
+    best_cfg_df = pd.read_csv(f"{args.dataset}/{args.dataset}_mlp_best_configs.csv")
     # Load the training target statistics
-    #train_targets_stats = pd.read_csv("boston/boston_train_targets_stats.csv")
+    #train_targets_stats = pd.read_csv(f"{args.dataset}/{args.dataset}_train_targets_stats.csv")
 
     splits_list = list(dataset.get_splits())
     n_procs = 4 #multiprocessing.cpu_count()
@@ -145,7 +150,7 @@ if __name__ == "__main__":
     results = []
     with ProcessPoolExecutor(max_workers=n_procs) as executor:
         futures = {
-            executor.submit(run_laplace_fold, fold_idx, splits, args.name, args.subset, args.hessian, best_cfg_df, params): fold_idx
+            executor.submit(run_laplace_fold, fold_idx, splits, args.name, args.subset, args.hessian, best_cfg_df, args.dataset, params): fold_idx
             for fold_idx, splits in enumerate(splits_list, start=1)
         }
         
@@ -160,7 +165,7 @@ if __name__ == "__main__":
 
     # Convert results to DataFrame and save
     results_df = pd.DataFrame(results)
-    results_df.to_csv(f"boston/{args.name}_results.csv", index=False)
+    results_df.to_csv(f"{args.dataset}/{args.name}_results.csv", index=False)
 
 
 
