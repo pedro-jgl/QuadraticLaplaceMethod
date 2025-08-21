@@ -957,6 +957,66 @@ class YachtHydrodynamics(Dataset):
             else:
                 yield train_ds, test_ds
 
+
+class ConcreteCompression(Dataset):
+    def __init__(self, n_split=20, val_size=0.0, shuffle=True, random_state=None):
+        self.type = "regression"
+        self.output_dim = 1
+        self.val_size = val_size
+        self.random_state = random_state
+        
+        # Load data
+        concrete = pd.read_csv('./data/concrete_compression.csv')
+        self.X = concrete.drop(columns=['Concrete compressive strength']).values.astype(float)
+        self.y = concrete['Concrete compressive strength'].values.astype(float).reshape(-1, 1)  
+        self.len_data = self.X.shape[0]
+        self.input_dim = self.X.shape[1]
+
+        # Set up KFold
+        self.kf = KFold(n_splits=n_split, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_split 
+
+    def __len__(self):
+        return self.len_data
+    
+    # get_splits
+    def get_splits(self, *args):
+        for trainval_idx, test_idx in self.kf.split(self.X):
+            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
+            X_test, y_test = self.X[test_idx], self.y[test_idx]
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
         
 def get_dataset(dataset_name, random_state=None):
     d = {
@@ -970,7 +1030,8 @@ def get_dataset(dataset_name, random_state=None):
         "Taxi": Taxi_Dataset,
         "Boston": Boston_Dataset,
         "Energy": EnergyEfficiency,
-        "Yacht": YachtHydrodynamics
+        "Yacht": YachtHydrodynamics,
+        "Concrete": ConcreteCompression
     }
 
     return d[dataset_name](random_state=random_state)

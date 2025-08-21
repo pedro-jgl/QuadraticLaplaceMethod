@@ -200,6 +200,8 @@ if __name__ == "__main__":
         dataset = get_dataset("Energy", random_state=params["seed"])
     elif args.dataset == "yacht":
         dataset = get_dataset("Yacht", random_state=params["seed"])
+    elif args.dataset == "concrete":
+        dataset = get_dataset("Concrete", random_state=params["seed"])
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
 
