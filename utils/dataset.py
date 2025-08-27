@@ -138,7 +138,7 @@ class Synthetic_Dataset(Dataset):
 
 
 class Synthetic2_Dataset(Dataset):
-    def __init__(self):
+    def __init__(self, random_state=0):
         self.type = "regression"
         self.output_dim = 1
 

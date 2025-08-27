@@ -26,7 +26,7 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, ds_na
         train_ds, test_ds = splits
         val_ds = None
 
-    train_loader = DataLoader(train_ds, batch_size=params['batch_size'], shuffle=True)
+    train_loader = DataLoader(train_ds, batch_size=params['batch_size'], shuffle=True, )
 
     # Get the best configuration for this fold
     best_cfg = best_cfg_df[best_cfg_df['fold'] == fold_idx].iloc[0]
@@ -76,11 +76,10 @@ def run_laplace_fold(fold_idx, splits, name, subset, hessian, best_cfg_df, ds_na
     #train_targets_mean = train_targets_stats.loc[fold_idx - 1, 'mean']
     #train_targets_std = train_targets_stats.loc[fold_idx - 1, 'std']
     mean_torch = train_ds.targets_mean.item() + mean_torch * train_ds.targets_std.item()
-    var_torch  = train_ds.targets_std.item() ** 2 * var_torch
+    var_torch  = train_ds.targets_std.item() ** 2 * (var_torch + np.exp(log_variance)) # Se hace así? O después de escalar?
 
     mean_torch = mean_torch.detach()
-    var_torch  = var_torch.detach() + np.exp(log_variance)
-    var_torch = var_torch.squeeze(-1)
+    var_torch  = var_torch.detach().squeeze(-1)
 
     y_true = torch.tensor(
         test_ds.targets,
