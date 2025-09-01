@@ -9,7 +9,7 @@ import pandas as pd
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 from sklearn.datasets import fetch_openml
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, ShuffleSplit
 import torchvision.transforms as trn
 from torchvision.transforms.functional import rotate
 from torchvision.transforms import GaussianBlur
@@ -772,6 +772,7 @@ class Boston_Dataset(Dataset):
         # Set up KFold
         self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
         self.n_splits = n_splits
+        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
@@ -825,7 +826,7 @@ class Boston_Dataset(Dataset):
 
 
 class EnergyEfficiency(Dataset):
-    def __init__(self, n_split=20, val_size=0.0, shuffle=True, random_state=None, target="y1"):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None, target="y1"):
         self.type = "regression"
         self.output_dim = 1
         self.val_size = val_size
@@ -844,8 +845,9 @@ class EnergyEfficiency(Dataset):
         self.input_dim = self.X.shape[1]
 
         # Set up KFold
-        self.kf = KFold(n_splits=n_split, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_split
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_splits
+        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
@@ -890,7 +892,7 @@ class EnergyEfficiency(Dataset):
     
 
 class YachtHydrodynamics(Dataset):
-    def __init__(self, n_split=20, val_size=0.0, shuffle=True, random_state=None):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         self.type = "regression"
         self.output_dim = 1
         self.val_size = val_size
@@ -913,8 +915,9 @@ class YachtHydrodynamics(Dataset):
         self.input_dim = self.X.shape[1]
 
         # Set up KFold
-        self.kf = KFold(n_splits=n_split, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_split 
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_splits
+        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
@@ -959,7 +962,7 @@ class YachtHydrodynamics(Dataset):
 
 
 class ConcreteCompression(Dataset):
-    def __init__(self, n_split=20, val_size=0.0, shuffle=True, random_state=None):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         self.type = "regression"
         self.output_dim = 1
         self.val_size = val_size
@@ -973,8 +976,9 @@ class ConcreteCompression(Dataset):
         self.input_dim = self.X.shape[1]
 
         # Set up KFold
-        self.kf = KFold(n_splits=n_split, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_split 
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_splits
+        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
@@ -1019,7 +1023,7 @@ class ConcreteCompression(Dataset):
 
 
 class RedWineQuality(Dataset):
-    def __init__(self, n_split=20, val_size=0.0, shuffle=True, random_state=None):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         self.type = "regression"
         self.output_dim = 1
         self.val_size = val_size
@@ -1035,8 +1039,9 @@ class RedWineQuality(Dataset):
         self.input_dim = self.X.shape[1]
 
         # Set up KFold
-        self.kf = KFold(n_splits=n_split, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_split
+        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
+        self.n_splits = n_splits
+        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
