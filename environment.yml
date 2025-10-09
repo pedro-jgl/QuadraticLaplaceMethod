@@ -1,20 +1,78 @@
 name: laplace
 channels:
-  - conda-forge
-  - pytorch
   - defaults
 dependencies:
-  - python=3.10
+  - matplotlib
   - pip
   - numpy
+  - pyparsing
   - opt_einsum
-  - matplotlib       # <— added
-  - pyparsing        # <— added to satisfy matplotlib
-  - pip:
-    - asdfghjkl==0.1a4
-    - backpack-for-pytorch
-    - curvlinops-for-pytorch>=2.0
-    - torch>=2.0
-    - torchvision>=0.15
-    - torchmetrics
-    - -e .
+  - python=3.10
+  - pygments
+  - keyutils
+  - libgomp
+  - libedit
+  - setuptools
+  - jedi
+  - libzlib
+  - wheel
+  - libsodium
+  - comm
+  - typing_extensions
+  - krb5
+  - ptyprocess
+  - matplotlib-inline
+  - six
+  - ipython
+  - debugpy
+  - pexpect
+  - libgcc-ng
+  - zeromq
+  - libexpat
+  - stack_data
+  - parso
+  - libstdcxx
+  - libsqlite
+  - ld_impl_linux-64
+  - libstdcxx-ng
+  - importlib-metadata
+  - zipp
+  - executing
+  - nest-asyncio
+  - prompt-toolkit
+  - python-dateutil
+  - _openmp_mutex
+  - bzip2
+  - _libgcc_mutex
+  - libxcrypt
+  - tzdata
+  - tk
+  - decorator
+  - readline
+  - packaging
+  - pure_eval
+  - traitlets
+  - jupyter_core
+  - pyzmq
+  - ncurses
+  - jupyter_client
+  - wcwidth
+  - libnsl
+  - liblzma
+  - pickleshare
+  - tornado
+  - ca-certificates
+  - libgcc
+  - openssl
+  - exceptiongroup
+  - psutil
+  - libuuid
+  - asttokens
+  - python_abi
+  - libffi
+  - platformdirs
+  - ipykernel
+  - pytz
+  - conda-forge::properscoring
+  - openpyxl
+prefix: /home/pedrojgl/miniconda3/envs/laplace
