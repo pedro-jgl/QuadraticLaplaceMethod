@@ -825,6 +825,58 @@ class Boston_Dataset(Dataset):
                 yield train_ds, test_ds
 
 
+    def get_in_between_splits(self, *args):
+        # Para cada dimensión de los inputs
+        for dim in range(self.input_dim):
+            # Ordenamos los datos en orden creciente según esa dimensión
+            sorted_indices = np.argsort(self.X[:, dim])
+            X_sorted = self.X[sorted_indices]
+            y_sorted = self.y[sorted_indices]
+
+            # Nos quedamos con 1/3 de los datos centrales para test
+            n_total = self.X.shape[0]
+            n_test = n_total // 3
+            start_idx = (n_total - n_test) // 2
+            end_idx = start_idx + n_test
+            X_test = X_sorted[start_idx:end_idx]
+            y_test = y_sorted[start_idx:end_idx]
+
+            # El resto de datos para trainval
+            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
+            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
+
+
 class EnergyEfficiency(Dataset):
     def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None, target="y1"):
         self.type = "regression"
@@ -890,6 +942,58 @@ class EnergyEfficiency(Dataset):
             else:
                 yield train_ds, test_ds
     
+
+    def get_in_between_splits(self, *args):
+        # Para cada dimensión de los inputs
+        for dim in range(self.input_dim):
+            # Ordenamos los datos en orden creciente según esa dimensión
+            sorted_indices = np.argsort(self.X[:, dim])
+            X_sorted = self.X[sorted_indices]
+            y_sorted = self.y[sorted_indices]
+
+            # Nos quedamos con 1/3 de los datos centrales para test
+            n_total = self.X.shape[0]
+            n_test = n_total // 3
+            start_idx = (n_total - n_test) // 2
+            end_idx = start_idx + n_test
+            X_test = X_sorted[start_idx:end_idx]
+            y_test = y_sorted[start_idx:end_idx]
+
+            # El resto de datos para trainval
+            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
+            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
+
 
 class YachtHydrodynamics(Dataset):
     def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
@@ -960,6 +1064,58 @@ class YachtHydrodynamics(Dataset):
             else:
                 yield train_ds, test_ds
 
+    
+    def get_in_between_splits(self, *args):
+        # Para cada dimensión de los inputs
+        for dim in range(self.input_dim):
+            # Ordenamos los datos en orden creciente según esa dimensión
+            sorted_indices = np.argsort(self.X[:, dim])
+            X_sorted = self.X[sorted_indices]
+            y_sorted = self.y[sorted_indices]
+
+            # Nos quedamos con 1/3 de los datos centrales para test
+            n_total = self.X.shape[0]
+            n_test = n_total // 3
+            start_idx = (n_total - n_test) // 2
+            end_idx = start_idx + n_test
+            X_test = X_sorted[start_idx:end_idx]
+            y_test = y_sorted[start_idx:end_idx]
+
+            # El resto de datos para trainval
+            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
+            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
+
 
 class ConcreteCompression(Dataset):
     def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
@@ -1021,6 +1177,58 @@ class ConcreteCompression(Dataset):
             else:
                 yield train_ds, test_ds
 
+    
+    def get_in_between_splits(self, *args):
+        # Para cada dimensión de los inputs
+        for dim in range(self.input_dim):
+            # Ordenamos los datos en orden creciente según esa dimensión
+            sorted_indices = np.argsort(self.X[:, dim])
+            X_sorted = self.X[sorted_indices]
+            y_sorted = self.y[sorted_indices]
+
+            # Nos quedamos con 1/3 de los datos centrales para test
+            n_total = self.X.shape[0]
+            n_test = n_total // 3
+            start_idx = (n_total - n_test) // 2
+            end_idx = start_idx + n_test
+            X_test = X_sorted[start_idx:end_idx]
+            y_test = y_sorted[start_idx:end_idx]
+
+            # El resto de datos para trainval
+            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
+            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
+
 
 class RedWineQuality(Dataset):
     def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
@@ -1074,6 +1282,57 @@ class RedWineQuality(Dataset):
             else:
                 val_ds = None
             
+            test_ds = Test_Dataset(
+                X_test, self.output_dim, y_test,
+                train_ds.inputs_mean, train_ds.inputs_std
+            )
+
+            if self.val_size > 0:
+                yield train_ds, val_ds, test_ds
+            else:
+                yield train_ds, test_ds
+
+    
+    def get_in_between_splits(self, *args):
+        # Para cada dimensión de los inputs
+        for dim in range(self.input_dim):
+            # Ordenamos los datos en orden creciente según esa dimensión
+            sorted_indices = np.argsort(self.X[:, dim])
+            X_sorted = self.X[sorted_indices]
+            y_sorted = self.y[sorted_indices]
+
+            # Nos quedamos con 1/3 de los datos centrales para test
+            n_total = self.X.shape[0]
+            n_test = n_total // 3
+            start_idx = (n_total - n_test) // 2
+            end_idx = start_idx + n_test
+            X_test = X_sorted[start_idx:end_idx]
+            y_test = y_sorted[start_idx:end_idx]
+
+            # El resto de datos para trainval
+            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
+            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
+
+            if self.val_size > 0:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
+                )
+            else:
+                X_train, y_train = X_trainval, y_trainval
+                X_val, y_val = None, None
+
+            # Normalizar inputs y targets
+            train_ds = Training_Dataset(
+                X_train, y_train, self.output_dim,
+                normalize_inputs=True, normalize_targets=True
+            )
+            if self.val_size > 0:
+                val_ds = Test_Dataset(
+                    X_val, self.output_dim, y_val,
+                    train_ds.inputs_mean, train_ds.inputs_std
+                )
+            else:
+                val_ds = None
             test_ds = Test_Dataset(
                 X_test, self.output_dim, y_test,
                 train_ds.inputs_mean, train_ds.inputs_std
