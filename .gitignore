@@ -147,3 +147,7 @@ energy/
 yacht/
 concrete/
 redwine/
+
+# Results
+results/
+slurm*

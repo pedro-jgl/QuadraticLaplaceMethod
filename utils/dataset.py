@@ -753,32 +753,42 @@ class Taxi_Dataset(Dataset):
         return self.train, self.val, self.test
     
 
-# Intentar considerar distintas particiones (hay pocos datos, en las otras clases de este doc hay más)
-# Promediar sobre 20 particiones o así
-class Boston_Dataset(Dataset):
-    def __init__(self, n_splits=20, val_size=0.0, shuffle = True, random_state=None):
-        self.type = "regression"
-        self.output_dim = 1
+class BaseDataset:
+    """
+    Clase wrapper que contiene la lógica común para los datasets de regresión usados en QLA.
+    """
+    def __init__(self, X, y, type="regression", output_dim=1, n_splits=20,
+                 val_size=0.0, shuffle=True, random_state=None):
+        # Metadatos
+        self.type = type
+        self.output_dim = output_dim
         self.val_size = val_size
         self.random_state = random_state
 
-        # Load data
-        boston = fetch_openml("boston", version=1, as_frame=True)
-        self.X = boston.data.astype(float).to_numpy()
-        self.y = boston.target.astype(float).to_numpy().reshape(-1, 1)
+        # Datos
+        self.X = X
+        self.y = y
+
+        # Shapes
         self.len_data = self.X.shape[0]
         self.input_dim = self.X.shape[1]
 
-        # Set up KFold
+        # Reproducibilidad de KFold
         self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
         self.n_splits = n_splits
-        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
+        
+        # Otra opción es usar ShuffleSplit en lugar de KFold
+        # self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
 
     def __len__(self):
         return self.len_data
-    
-    # get_splits
+
     def get_splits(self, *args):
+        """
+        Itera por folds KFold. Para cada fold produce:
+          - si val_size>0: (train_ds, val_ds, test_ds)
+          - si val_size==0: (train_ds, test_ds)
+        """
         for trainval_idx, test_idx in self.kf.split(self.X):
             X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
             X_test, y_test = self.X[test_idx], self.y[test_idx]
@@ -791,21 +801,12 @@ class Boston_Dataset(Dataset):
                 X_train, y_train = X_trainval, y_trainval
                 X_val, y_val = None, None
 
-            # Normalizar también los targets -> entonces tenemos que tener cuidado al calcular el error (debe ser en el espacio original)
-            # Si consideramos el espacio original, los errores son relativos al dataset, va a cambiar de uno a otro.
-            # Notar que también cambia la dist predictiva si entrenamos en el espacio transformado.
-
-            # Hacer las predicciones en el espacio original, así voy a poder usar el código de métricas.
-
-            # Normalizar inputs y targets
-            # Entrenar con los datos normalizados. Normalizar test para predecir y esto me da predicciones en el espacio transformado.
-            # Para obtener las predicciones en el espacio original, tengo que deshacer la normalización de los targets.
-            # Para ello, hago preds*stqrt(targets_std) + targets_mean 
+            # Normalizar inputs y targets en Training_Dataset según tu implementación
             train_ds = Training_Dataset(
                 X_train, y_train, self.output_dim,
                 normalize_inputs=True, normalize_targets=True
-                )
-            
+            )
+
             if self.val_size > 0:
                 val_ds = Test_Dataset(
                     X_val, self.output_dim, y_val,
@@ -813,7 +814,7 @@ class Boston_Dataset(Dataset):
                 )
             else:
                 val_ds = None
-            
+
             test_ds = Test_Dataset(
                 X_test, self.output_dim, y_test,
                 train_ds.inputs_mean, train_ds.inputs_std
@@ -824,16 +825,16 @@ class Boston_Dataset(Dataset):
             else:
                 yield train_ds, test_ds
 
-
     def get_in_between_splits(self, *args):
-        # Para cada dimensión de los inputs
+        """
+        Para cada dimensión, toma el tercio central ordenado por esa dimensión como test.
+        Resto: trainval -> split en train/val según val_size.
+        """
         for dim in range(self.input_dim):
-            # Ordenamos los datos en orden creciente según esa dimensión
             sorted_indices = np.argsort(self.X[:, dim])
             X_sorted = self.X[sorted_indices]
             y_sorted = self.y[sorted_indices]
 
-            # Nos quedamos con 1/3 de los datos centrales para test
             n_total = self.X.shape[0]
             n_test = n_total // 3
             start_idx = (n_total - n_test) // 2
@@ -841,7 +842,6 @@ class Boston_Dataset(Dataset):
             X_test = X_sorted[start_idx:end_idx]
             y_test = y_sorted[start_idx:end_idx]
 
-            # El resto de datos para trainval
             X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
             y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
 
@@ -853,7 +853,6 @@ class Boston_Dataset(Dataset):
                 X_train, y_train = X_trainval, y_trainval
                 X_val, y_val = None, None
 
-            # Normalizar inputs y targets
             train_ds = Training_Dataset(
                 X_train, y_train, self.output_dim,
                 normalize_inputs=True, normalize_targets=True
@@ -877,14 +876,19 @@ class Boston_Dataset(Dataset):
 
 
 
-class EnergyEfficiency(Dataset):
-    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None, target="y1"):
-        self.type = "regression"
-        self.output_dim = 1
-        self.val_size = val_size
-        self.random_state = random_state
+class Boston_Dataset(BaseDataset):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle = True, random_state=None):
+        boston = fetch_openml("boston", version=1, as_frame=True)
+        self.X = boston.data.astype(float).to_numpy()
+        self.y = boston.target.astype(float).to_numpy().reshape(-1, 1)
         
-        # Load data
+        super().__init__(self.X, self.y, type="regression", output_dim=1,
+                         n_splits=n_splits, val_size=val_size, shuffle=shuffle, random_state=random_state)
+
+
+
+class EnergyEfficiency(BaseDataset):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None, target="y1"):
         energy = pd.read_excel('./data/energy_efficiency.xlsx')
         self.X = energy.drop(columns=["Y1", "Y2"]).values.astype(float)
         if target == "y1":
@@ -893,116 +897,14 @@ class EnergyEfficiency(Dataset):
             self.y = energy["Y2"].values.astype(float).reshape(-1, 1)
         else:
             raise ValueError("Target must be 'y1' or 'y2'.")
-        self.len_data = self.X.shape[0]
-        self.input_dim = self.X.shape[1]
 
-        # Set up KFold
-        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_splits
-        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
+        super().__init__(self.X, self.y, type="regression", output_dim=1,
+                         n_splits=n_splits, val_size=val_size, shuffle=shuffle, random_state=random_state)
 
-    def __len__(self):
-        return self.len_data
-    
-    # get_splits
-    def get_splits(self, *args):
-        for trainval_idx, test_idx in self.kf.split(self.X):
-            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
-            X_test, y_test = self.X[test_idx], self.y[test_idx]
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-    
-
-    def get_in_between_splits(self, *args):
-        # Para cada dimensión de los inputs
-        for dim in range(self.input_dim):
-            # Ordenamos los datos en orden creciente según esa dimensión
-            sorted_indices = np.argsort(self.X[:, dim])
-            X_sorted = self.X[sorted_indices]
-            y_sorted = self.y[sorted_indices]
-
-            # Nos quedamos con 1/3 de los datos centrales para test
-            n_total = self.X.shape[0]
-            n_test = n_total // 3
-            start_idx = (n_total - n_test) // 2
-            end_idx = start_idx + n_test
-            X_test = X_sorted[start_idx:end_idx]
-            y_test = y_sorted[start_idx:end_idx]
-
-            # El resto de datos para trainval
-            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
-            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-
-
-class YachtHydrodynamics(Dataset):
-    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
-        self.type = "regression"
-        self.output_dim = 1
-        self.val_size = val_size
-        self.random_state = random_state
         
-        # Load data
+
+class YachtHydrodynamics(BaseDataset):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         column_names = [
         'Longitudinal position of the center of buoyancy',
         'Prismatic coefficient', 
@@ -1015,336 +917,37 @@ class YachtHydrodynamics(Dataset):
         yacht = pd.read_csv('./data/yacht_hydrodynamics.csv', sep=' ', names=column_names)
         self.X = yacht.drop(columns=['Residuary resistance per unit weight of displacement']).values.astype(float)
         self.y = yacht['Residuary resistance per unit weight of displacement'].values.astype(float).reshape(-1, 1)  
-        self.len_data = self.X.shape[0]
-        self.input_dim = self.X.shape[1]
-
-        # Set up KFold
-        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_splits
-        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
-
-    def __len__(self):
-        return self.len_data
-    
-    # get_splits
-    def get_splits(self, *args):
-        for trainval_idx, test_idx in self.kf.split(self.X):
-            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
-            X_test, y_test = self.X[test_idx], self.y[test_idx]
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-    
-    def get_in_between_splits(self, *args):
-        # Para cada dimensión de los inputs
-        for dim in range(self.input_dim):
-            # Ordenamos los datos en orden creciente según esa dimensión
-            sorted_indices = np.argsort(self.X[:, dim])
-            X_sorted = self.X[sorted_indices]
-            y_sorted = self.y[sorted_indices]
-
-            # Nos quedamos con 1/3 de los datos centrales para test
-            n_total = self.X.shape[0]
-            n_test = n_total // 3
-            start_idx = (n_total - n_test) // 2
-            end_idx = start_idx + n_test
-            X_test = X_sorted[start_idx:end_idx]
-            y_test = y_sorted[start_idx:end_idx]
-
-            # El resto de datos para trainval
-            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
-            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-
-
-class ConcreteCompression(Dataset):
-    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
-        self.type = "regression"
-        self.output_dim = 1
-        self.val_size = val_size
-        self.random_state = random_state
         
-        # Load data
+        super().__init__(self.X, self.y, type="regression", output_dim=1,
+                         n_splits=n_splits, val_size=val_size, shuffle=shuffle, random_state=random_state)
+
+
+
+class ConcreteCompression(BaseDataset):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         concrete = pd.read_csv('./data/concrete_compression.csv')
         self.X = concrete.drop(columns=['Concrete compressive strength']).values.astype(float)
         self.y = concrete['Concrete compressive strength'].values.astype(float).reshape(-1, 1)  
-        self.len_data = self.X.shape[0]
-        self.input_dim = self.X.shape[1]
-
-        # Set up KFold
-        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_splits
-        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
-
-    def __len__(self):
-        return self.len_data
-    
-    # get_splits
-    def get_splits(self, *args):
-        for trainval_idx, test_idx in self.kf.split(self.X):
-            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
-            X_test, y_test = self.X[test_idx], self.y[test_idx]
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-    
-    def get_in_between_splits(self, *args):
-        # Para cada dimensión de los inputs
-        for dim in range(self.input_dim):
-            # Ordenamos los datos en orden creciente según esa dimensión
-            sorted_indices = np.argsort(self.X[:, dim])
-            X_sorted = self.X[sorted_indices]
-            y_sorted = self.y[sorted_indices]
-
-            # Nos quedamos con 1/3 de los datos centrales para test
-            n_total = self.X.shape[0]
-            n_test = n_total // 3
-            start_idx = (n_total - n_test) // 2
-            end_idx = start_idx + n_test
-            X_test = X_sorted[start_idx:end_idx]
-            y_test = y_sorted[start_idx:end_idx]
-
-            # El resto de datos para trainval
-            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
-            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-
-
-class RedWineQuality(Dataset):
-    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
-        self.type = "regression"
-        self.output_dim = 1
-        self.val_size = val_size
-        self.random_state = random_state
         
-        # Load data
+        super().__init__(self.X, self.y, type="regression", output_dim=1,
+                         n_splits=n_splits, val_size=val_size, shuffle=shuffle, random_state=random_state)
+
+
+
+class RedWineQuality(BaseDataset):
+    def __init__(self, n_splits=20, val_size=0.0, shuffle=True, random_state=None):
         wine = pd.read_csv('./data/winequality-red.csv', sep=';')
         # Sample 50% of the data
         wine = wine.sample(frac=0.5, random_state=random_state).reset_index(drop=True)
         self.X = wine.drop(columns=['quality']).values.astype(float)
         self.y = wine['quality'].values.astype(float).reshape(-1, 1)    
-        self.len_data = self.X.shape[0]
-        self.input_dim = self.X.shape[1]
-
-        # Set up KFold
-        self.kf = KFold(n_splits=n_splits, shuffle=shuffle, random_state=random_state)
-        self.n_splits = n_splits
-        #self.ss = ShuffleSplit(n_splits=n_splits, test_size=0.2, train_size=0.8, random_state=random_state)
-
-    def __len__(self):
-        return self.len_data
-    
-    # get_splits
-    def get_splits(self, *args):
-        for trainval_idx, test_idx in self.kf.split(self.X):
-            X_trainval, y_trainval = self.X[trainval_idx], self.y[trainval_idx]
-            X_test, y_test = self.X[test_idx], self.y[test_idx]
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
-
-    
-    def get_in_between_splits(self, *args):
-        # Para cada dimensión de los inputs
-        for dim in range(self.input_dim):
-            # Ordenamos los datos en orden creciente según esa dimensión
-            sorted_indices = np.argsort(self.X[:, dim])
-            X_sorted = self.X[sorted_indices]
-            y_sorted = self.y[sorted_indices]
-
-            # Nos quedamos con 1/3 de los datos centrales para test
-            n_total = self.X.shape[0]
-            n_test = n_total // 3
-            start_idx = (n_total - n_test) // 2
-            end_idx = start_idx + n_test
-            X_test = X_sorted[start_idx:end_idx]
-            y_test = y_sorted[start_idx:end_idx]
-
-            # El resto de datos para trainval
-            X_trainval = np.concatenate((X_sorted[:start_idx], X_sorted[end_idx:]), axis=0)
-            y_trainval = np.concatenate((y_sorted[:start_idx], y_sorted[end_idx:]), axis=0)
-
-            if self.val_size > 0:
-                X_train, X_val, y_train, y_val = train_test_split(
-                    X_trainval, y_trainval, test_size=self.val_size, random_state=self.random_state
-                )
-            else:
-                X_train, y_train = X_trainval, y_trainval
-                X_val, y_val = None, None
-
-            # Normalizar inputs y targets
-            train_ds = Training_Dataset(
-                X_train, y_train, self.output_dim,
-                normalize_inputs=True, normalize_targets=True
-            )
-            if self.val_size > 0:
-                val_ds = Test_Dataset(
-                    X_val, self.output_dim, y_val,
-                    train_ds.inputs_mean, train_ds.inputs_std
-                )
-            else:
-                val_ds = None
-            test_ds = Test_Dataset(
-                X_test, self.output_dim, y_test,
-                train_ds.inputs_mean, train_ds.inputs_std
-            )
-
-            if self.val_size > 0:
-                yield train_ds, val_ds, test_ds
-            else:
-                yield train_ds, test_ds
         
+        super().__init__(self.X, self.y, type="regression", output_dim=1,
+                         n_splits=n_splits, val_size=val_size, shuffle=shuffle, random_state=random_state)
 
-        
+
+
+
 def get_dataset(dataset_name, random_state=None):
     d = {
         "synthetic": Synthetic_Dataset,
