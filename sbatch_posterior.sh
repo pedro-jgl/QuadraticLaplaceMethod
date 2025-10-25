@@ -41,7 +41,7 @@ SPLIT_IDX=${SLURM_ARRAY_TASK_ID}
 echo "[Posterior] host=$(hostname) dataset=${DATASET} split=${SPLIT_IDX} method=${METHOD} in_between=${INBETWEEN}"
 
 if [ "$INBETWEEN" -eq 1 ]; then
-    python Posterior_slurm.py --dataset "$DATASET" --split "$SPLIT_IDX" --name "$METHOD" --in_between_splits --seed "$SEED" --results_root "$RESULTS_ROOT"
+    python Posterior.py --dataset "$DATASET" --split "$SPLIT_IDX" --name "$METHOD" --in_between_splits --seed "$SEED" --results_root "$RESULTS_ROOT"
 else
-    python Posterior_slurm.py --dataset "$DATASET" --split "$SPLIT_IDX" --name "$METHOD" --seed "$SEED" --results_root "$RESULTS_ROOT"
+    python Posterior.py --dataset "$DATASET" --split "$SPLIT_IDX" --name "$METHOD" --seed "$SEED" --results_root "$RESULTS_ROOT"
 fi

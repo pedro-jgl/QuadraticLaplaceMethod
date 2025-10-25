@@ -40,7 +40,7 @@ SPLIT_IDX=${SLURM_ARRAY_TASK_ID}
 echo "[MAP] host=$(hostname) dataset=${DATASET} split=${SPLIT_IDX} in_between=${INBETWEEN}"
 
 if [ "$INBETWEEN" -eq 1 ]; then
-    python MAP_slurm.py --dataset "$DATASET" --split "$SPLIT_IDX" --in_between_splits --seed "$SEED" --results_root "$RESULTS_ROOT"
+    python MAP.py --dataset "$DATASET" --split "$SPLIT_IDX" --in_between_splits --seed "$SEED" --results_root "$RESULTS_ROOT"
 else
-    python MAP_slurm.py --dataset "$DATASET" --split "$SPLIT_IDX" --seed "$SEED" --results_root "$RESULTS_ROOT"
+    python MAP.py --dataset "$DATASET" --split "$SPLIT_IDX" --seed "$SEED" --results_root "$RESULTS_ROOT"
 fi

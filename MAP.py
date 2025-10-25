@@ -1,47 +1,38 @@
+#!/usr/bin/env python3
+# MAP_slurm.py (refactor para ejecutarse por dataset + split, con opción in_between)
+import os
+import argparse
 import numpy as np
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader
-import sys
 from time import process_time as timer
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-from laplace import Laplace
+from sklearn.model_selection import KFold
 from utils.dataset import get_dataset
 from utils.models import get_mlp
 from utils.pytorch_learning import fit_map
-from utils.metrics import *
-from sklearn.metrics import root_mean_squared_error, mean_absolute_error
-from sklearn.model_selection import KFold
-import argparse
 
-from concurrent.futures import ProcessPoolExecutor, as_completed
-import multiprocessing
-
-
-# Hyperparameter grid
+# Hypergrid
 grid = {
     'num_layers': [1, 2, 3],
     'hidden_units': [20, 30, 50],
     'weight_decay': [0.0, 1e-4, 1e-3]
 }
 
-def run_fold(fold_idx, splits, ds_name, params):
-    # Unpack splits
+
+def run_fold_local(fold_idx, splits, ds_name, params, results_root="results", split_type="kfold"):
     if len(splits) == 3:
         train_ds, val_ds, test_ds = splits
     else:
         train_ds, test_ds = splits
         val_ds = None
 
-    # Prepare indices for inner CV
     indices = np.arange(len(train_ds))
     inner_cv = KFold(n_splits=5, shuffle=True, random_state=params['seed'])
 
     best_cfg = None
     best_score = float('inf')
 
-    # Grid search with internal 5-fold CV
     for num_layers in grid['num_layers']:
         for hidden_units in grid['hidden_units']:
             for weight_decay in grid['weight_decay']:
@@ -53,7 +44,6 @@ def run_fold(fold_idx, splits, ds_name, params):
                     train_loader = DataLoader(sub_train, batch_size=params['batch_size'], shuffle=True)
                     val_loader   = DataLoader(sub_val,   batch_size=params['batch_size'], shuffle=False)
 
-                    # Build model
                     inner_dims = [hidden_units] * num_layers
                     f = get_mlp(
                         train_ds.inputs.shape[1],
@@ -65,12 +55,9 @@ def run_fold(fold_idx, splits, ds_name, params):
                         dtype=params['dtype'],
                     )
 
-                    optimizer = torch.optim.Adam(
-                        f.parameters(), lr=params['lr'], weight_decay=weight_decay
-                    )
+                    optimizer = torch.optim.Adam(f.parameters(), lr=params['lr'], weight_decay=weight_decay)
                     criterion = torch.nn.MSELoss()
 
-                    # Train inner model
                     fit_map(
                         f,
                         train_loader,
@@ -118,13 +105,10 @@ def run_fold(fold_idx, splits, ds_name, params):
         device=params['device'],
         dtype=params['dtype'],
     )
-    optimizer = torch.optim.Adam(
-        f_best.parameters(), lr=params['lr'], weight_decay=best_cfg['weight_decay']
-    )
+    optimizer = torch.optim.Adam(f_best.parameters(), lr=params['lr'], weight_decay=best_cfg['weight_decay'])
     criterion = torch.nn.MSELoss()
 
     start = timer()
-    # Train full model via fit_map
     total_iters = params['epochs'] * len(loader_full)
     fit_map(
         f_best,
@@ -148,17 +132,27 @@ def run_fold(fold_idx, splits, ds_name, params):
             preds.append(f_best(xb).cpu())
             targets.append(yb)
     preds   = torch.cat(preds, dim=0)
-    # Desnormalizar las predicciones
-    preds   = train_ds.targets_mean.item() + preds * train_ds.targets_std.item()
+    try:
+        mean_scalar = float(np.asarray(train_ds.targets_mean).item())
+        std_scalar  = float(np.asarray(train_ds.targets_std).item())
+    except Exception:
+        mean_scalar = float(train_ds.targets_mean)
+        std_scalar  = float(train_ds.targets_std)
+
+    preds   = mean_scalar + preds * std_scalar
     targets = torch.cat(targets, dim=0)
 
     rmse = np.sqrt(torch.nn.functional.mse_loss(preds, targets).item())
     mae  = torch.nn.functional.l1_loss(preds, targets).item()
 
-    # Store model
-    torch.save(f_best.state_dict(), f"{ds_name}/best_mlp_fold_{fold_idx}.pt")
+    # Guardar modelo y CSV individual por fold (NO summary global)
+    map_subdir = "in_between" if split_type == "in_between" else "kfold"
+    results_dir = os.path.join(results_root, ds_name, "MAP", map_subdir)
+    os.makedirs(results_dir, exist_ok=True)
+    model_path = os.path.join(results_dir, f"best_mlp_fold_{fold_idx}.pt")
+    torch.save(f_best.state_dict(), model_path)
 
-    return {
+    cfg_row = {
         'fold': fold_idx,
         'num_layers': best_cfg['num_layers'],
         'hidden_units': best_cfg['hidden_units'],
@@ -166,27 +160,37 @@ def run_fold(fold_idx, splits, ds_name, params):
         'test_rmse': rmse,
         'test_mae': mae,
         'training_time': end - start,
-        'train_mean': train_ds.targets_mean.item(),
-        'train_std': train_ds.targets_std.item()
+        'train_mean': mean_scalar,
+        'train_std': std_scalar,
+        'split_type': split_type
     }
+    # CSV individual por fold (único archivo escrito por este proceso)
+    cfg_csv = os.path.join(results_root, ds_name, f"{ds_name}_mlp_best_configs_fold_{fold_idx}.csv")
+    pd.DataFrame([cfg_row]).to_csv(cfg_csv, index=False)
+
+    return cfg_row
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, required=True, help="Name of the dataset (e.g., 'boston', 'energy')")
+    parser.add_argument('--dataset', type=str, required=True, help="boston|energy|yacht|concrete|redwine")
+    parser.add_argument('--split', type=int, required=True, help="Split index (1..n_splits)")
+    parser.add_argument('--in_between_splits', action='store_true', help="Use get_in_between_splits instead of get_splits")
+    parser.add_argument('--seed', type=int, default=2147483647)
+    parser.add_argument('--results_root', type=str, default="results")
     args = parser.parse_args()
 
-    # ----- Initial configuration -----
     params = {
             "num_inducing": 20,
             "bnn_structure": [50, 50],
             "MAP_lr": 0.001,
             "MAP_iterations": 3000,
-            "lr": 0.001,    # 0.01 o 0.001 
-            "epochs": 200,    # Echar un vistazo a loss y ver si se estabiliza (a lo mejor converge con 50 épocas)
+            "lr": 0.001,
+            "epochs": 200,
             "activation": torch.nn.Tanh,
             "device": "cpu",
             "dtype": torch.float64,
-            "seed": 2147483647,
+            "seed": args.seed,
             "bb_alpha": 0,
             "prior_std": 1,
             "ll_std": 1,
@@ -194,39 +198,40 @@ if __name__ == "__main__":
     }
 
     torch.manual_seed(params["seed"])
-    if args.dataset == "boston":
-        dataset = get_dataset("Boston", random_state=params["seed"])
-    elif args.dataset == "energy":
-        dataset = get_dataset("Energy", random_state=params["seed"])
-    elif args.dataset == "yacht":
-        dataset = get_dataset("Yacht", random_state=params["seed"])
-    elif args.dataset == "concrete":
-        dataset = get_dataset("Concrete", random_state=params["seed"])
-    elif args.dataset == "redwine":
-        dataset = get_dataset("RedWine", random_state=params["seed"])
-    else:
+    np.random.seed(params["seed"])
+
+    mapping = {
+        "boston": "Boston",
+        "energy": "Energy",
+        "yacht": "Yacht",
+        "concrete": "Concrete",
+        "redwine": "RedWine"
+    }
+    ds_key = args.dataset.lower()
+    if ds_key not in mapping:
         raise ValueError(f"Unknown dataset: {args.dataset}")
+    ds_name = mapping[ds_key]
 
-    n_procs = 4 # multiprocessing.cpu_count()
-    splits_list = list(dataset.get_splits())
+    dataset = get_dataset(ds_name, random_state=params["seed"])
 
-    results = []
-    with ProcessPoolExecutor(max_workers=n_procs) as executor:
-        futures = {executor.submit(run_fold, fold_idx, splits, args.dataset, params): fold_idx for fold_idx, splits in enumerate(splits_list, start=1)}
-        for future in as_completed(futures):
-            res = future.result()
-            print(f"[Fold {res['fold']}] Best inner CV RMSE: {res['test_rmse']:.4f} with {res['num_layers']} layers and {res['hidden_units']} hidden units")
-            results.append(res)
+    # Elegir tipo de split
+    if args.in_between_splits:
+        splits_iterable = list(dataset.get_in_between_splits())
+        split_type = "in_between"
+    else:
+        splits_iterable = list(dataset.get_splits())
+        split_type = "kfold"
 
-    # Convert results to DataFrame
-    best_cfg_df = pd.DataFrame(results)[['fold','num_layers','hidden_units','weight_decay','test_rmse','test_mae','training_time']]
-    stats_df = best_cfg_df.agg({'test_rmse':['mean','std'], 'test_mae':['mean','std']})
-    train_stats = pd.DataFrame([{'mean': r['train_mean'], 'std': r['train_std']} for r in results])
+    n_splits_available = len(splits_iterable)
+    if args.split < 1 or args.split > n_splits_available:
+        raise ValueError(f"split must be in 1..{n_splits_available} for dataset {ds_name} with split_type={split_type}")
 
-    print("=== FINAL AVERAGES OVER {} FOLDS ===".format(len(results)))
-    print(f"MLP avg RMSE: {stats_df.loc['mean','test_rmse']:.4f} ± {stats_df.loc['std','test_rmse']:.4f}")
-    print(f"MLP avg MAE: {stats_df.loc['mean','test_mae']:.4f} ± {stats_df.loc['std','test_mae']:.4f}")
+    splits = splits_iterable[args.split - 1]
 
-    best_cfg_df.to_csv(f"{args.dataset}/{args.dataset}_mlp_best_configs.csv", index=False)
-    train_stats.to_csv(f"{args.dataset}/{args.dataset}_train_targets_stats.csv", index=False)
+    print(f"[MAP] dataset={ds_name} split={args.split}/{n_splits_available} split_type={split_type}")
+    res = run_fold_local(args.split, splits, ds_name, params, results_root=args.results_root, split_type=split_type)
 
+    # NOTA: No se concatena un CSV global aquí; cada proceso escribe SU CSV individual:
+    # results/{ds_name}/{ds_name}_mlp_best_configs_fold_{fold_idx}.csv
+
+    print("[MAP] Done:", res)
