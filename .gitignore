@@ -150,4 +150,5 @@ redwine/
 
 # Results
 results/
-slurm*
+results_old/
+slurm_out/

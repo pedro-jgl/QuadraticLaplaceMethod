@@ -27,6 +27,10 @@ def infer_subset_hessian_from_name(name):
 
 
 def run_laplace_local(fold_idx, splits, name, subset, hessian, cfg_row, ds_name, params, results_root="results", split_type="kfold"):
+    """
+    Ejecuta Laplace para un fold. Si name == 'lla' optimiza log_prior/log_sigma y los guarda.
+    Si name != 'lla', carga los hiperparámetros guardados por 'lla' y los usa sin optimizar.
+    """
     if len(splits) == 3:
         train_ds, val_ds, test_ds = splits
     else:
@@ -52,7 +56,7 @@ def run_laplace_local(fold_idx, splits, name, subset, hessian, cfg_row, ds_name,
 
     model_path = os.path.join(results_root, ds_name, "MAP", split_type, f"best_mlp_fold_{fold_idx}.pt")
     if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model file not found: {model_path}. Run MAP_slurm.py first for this fold.")
+        raise FileNotFoundError(f"Model file not found: {model_path}. Run MAP.py first for this fold.")
 
     f.load_state_dict(torch.load(model_path, map_location='cpu'))
 
@@ -60,18 +64,59 @@ def run_laplace_local(fold_idx, splits, name, subset, hessian, cfg_row, ds_name,
     train_loader = DataLoader(train_ds, batch_size=params['batch_size'], shuffle=True)
     la.fit(train_loader)
 
-    log_prior = torch.ones(1, requires_grad=True, dtype=params['dtype'])
-    log_sigma = torch.ones(1, requires_grad=True, dtype=params['dtype'])
-    hyper_optimizer = torch.optim.Adam([log_prior, log_sigma], lr=1e-1)
-    for _ in tqdm(range(100), desc=f"[Laplace {name}] fold {fold_idx}"):
-        hyper_optimizer.zero_grad()
-        neg_marglik = -la.log_marginal_likelihood(log_prior.exp(), log_sigma.exp())
-        neg_marglik.backward()
-        hyper_optimizer.step()
+    # Directorio donde se guardan/leen los hiperparámetros calculados por 'lla'
+    hyper_dir = os.path.join(results_root, ds_name, "post", "lla", split_type)
+    os.makedirs(hyper_dir, exist_ok=True)
+    hyper_path = os.path.join(hyper_dir, f"lla_hyper_fold_{fold_idx}.pt")
 
-    prior_std = np.sqrt(1 / np.exp(log_prior.detach().numpy())).item()
-    log_variance = 2 * log_sigma.detach().numpy().item()
+    name_lower = name.lower()
+    if name_lower == 'lla':
+        # Optimizar log_prior/log_sigma como siempre y guardar
+        log_prior = torch.ones(1, requires_grad=True, dtype=params['dtype'])
+        log_sigma = torch.ones(1, requires_grad=True, dtype=params['dtype'])
+        hyper_optimizer = torch.optim.Adam([log_prior, log_sigma], lr=1e-1)
+        for _ in tqdm(range(100), desc=f"[Laplace {name_lower}] fold {fold_idx} (optimizing)"):
+            hyper_optimizer.zero_grad()
+            neg_marglik = -la.log_marginal_likelihood(log_prior.exp(), log_sigma.exp())
+            neg_marglik.backward()
+            hyper_optimizer.step()
 
+        # Guardar los tensores optimizados para uso por otros métodos
+        to_save = {
+            'log_prior': log_prior.detach().cpu(),
+            'log_sigma': log_sigma.detach().cpu()
+        }
+        torch.save(to_save, hyper_path)
+        # Ya tenemos los valores finales en log_prior/log_sigma
+        final_log_prior = log_prior.detach()
+        final_log_sigma = log_sigma.detach()
+    else:
+        # Cargar los hiperparámetros previamente guardados por 'lla' y usarlos tal cual
+        if not os.path.exists(hyper_path):
+            raise FileNotFoundError(
+                f"Hipers de 'lla' no encontrados para fold {fold_idx} en {hyper_path}. "
+                f"Ejecuta Posterior_slurm.py --name lla para este fold antes de ejecutar '{name_lower}'."
+            )
+        loaded = torch.load(hyper_path, map_location='cpu')
+        # loaded expected shape: {'log_prior': tensor, 'log_sigma': tensor}
+        if 'log_prior' not in loaded or 'log_sigma' not in loaded:
+            raise RuntimeError(f"Archivo de hiperparámetros corrupto: {hyper_path}")
+        # Convertir a dtype correcto
+        final_log_prior = loaded['log_prior'].to(dtype=params['dtype'])
+        final_log_sigma = loaded['log_sigma'].to(dtype=params['dtype'])
+        # Asegurar que requieren_grad = False (no optimización)
+        final_log_prior.requires_grad_(False)
+        final_log_sigma.requires_grad_(False)
+
+        # Llamada para que Laplace internalice estos hiperparámetros (sin optimizar)
+        # no hacemos backward ni optimización, solo evaluamos la marginal likelihood con estos valores
+        _ = la.log_marginal_likelihood(final_log_prior.exp(), final_log_sigma.exp())
+
+    # Calcular prior_std y log_variance a partir de final_log_prior/final_log_sigma
+    prior_std = np.sqrt(1 / np.exp(final_log_prior.detach().cpu().numpy())).item()
+    log_variance = 2 * final_log_sigma.detach().cpu().numpy().item()
+
+    # Predictive distribution
     X = test_ds.inputs
     mean_torch, var_torch = la._glm_predictive_distribution(
         torch.tensor(X, dtype=params['dtype'], device=params["device"])
@@ -94,15 +139,15 @@ def run_laplace_local(fold_idx, splits, name, subset, hessian, cfg_row, ds_name,
     la_reg = Regression()
     la_reg.update(y_true, mean_torch, var_torch)
 
-    out_dir = os.path.join(results_root, ds_name, "post", name, split_type)
+    out_dir = os.path.join(results_root, ds_name, "post", name_lower, split_type)
     os.makedirs(out_dir, exist_ok=True)
     metrics_df = pd.DataFrame([la_reg.get_dict()])
-    metrics_csv = os.path.join(out_dir, f"{name}_metrics_fold_{fold_idx}.csv")
+    metrics_csv = os.path.join(out_dir, f"{name_lower}_metrics_fold_{fold_idx}.csv")
     metrics_df.to_csv(metrics_csv, index=False)
 
     return {
         'fold': fold_idx,
-        'name': name,
+        'name': name_lower,
         'num_layers': num_layers,
         'hidden_units': hidden_units,
         'weight_decay': weight_decay,
